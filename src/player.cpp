@@ -7,28 +7,9 @@
 
 #include <X11/Xlib.h>
 
-#include <cstdio>
-
-#include "procexec.h"
+#include "video_config.h"
 
 namespace kiosk {
-
-namespace {
-
-// Remove espaços/quebras de linha no fim da saída de um processo
-// (yt-dlp -g imprime a URL seguida de \n).
-std::string TrimTrailingWhitespace(std::string s) {
-    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ')) {
-        s.pop_back();
-    }
-    return s;
-}
-
-bool IsDirectPlayable(VideoOrigin origem) {
-    return origem == VideoOrigin::Upload || origem == VideoOrigin::Direto;
-}
-
-} // namespace
 
 VideoPlayer::VideoPlayer() = default;
 
@@ -69,20 +50,21 @@ void VideoPlayer::SetGeometry(int screenX, int screenY, int width, int height) {
 }
 
 std::string VideoPlayer::ResolveStreamUrl(const Campaign &campaign) const {
-    if (IsDirectPlayable(campaign.video_origem)) {
-        return campaign.video_url;
-    }
+    // "TODO"/vazio: placeholder ainda não preenchido em config/campaigns.conf.
+    if (campaign.video_url.empty() || campaign.video_url == "TODO") return "";
 
-    // youtube / instagram / facebook: resolve pra URL de stream direta
-    // via yt-dlp, pra nunca precisar do player/iframe oficial da
-    // plataforma.
-    std::string streamUrl;
-    bool ok = RunCaptureStdout(
-        {"yt-dlp", "-g", "-f", "best[ext=mp4]/best", "--no-warnings",
-         campaign.video_url},
-        20, streamUrl);
-    if (!ok || streamUrl.empty()) return "";
-    return TrimTrailingWhitespace(streamUrl);
+    // upload/direto: URL de arquivo já reproduzível, passa direto.
+    // youtube/instagram/facebook: também passamos a URL ORIGINAL direto
+    // pro mpv, sem chamar yt-dlp nós mesmos. Motivo (descoberto testando
+    // com um vídeo real em 2026-09-26): `yt-dlp -g` sozinho, sem uma
+    // stream progressiva disponível (comum hoje em dia no YouTube),
+    // imprime DUAS URLs em linhas separadas (vídeo e áudio sem mux) — um
+    // `execlp` com uma string só quebraria nesse caso. O mpv já vem com
+    // um hook Lua (`ytdl_hook`) que chama o yt-dlp sozinho e sabe tocar
+    // vídeo+áudio separados sem precisar de mux/ffmpeg. Deixar o mpv
+    // fazer isso é mais simples E mais robusto do que replicar a lógica
+    // aqui. Ver docs/memory/known-issues.md item 5.
+    return campaign.video_url;
 }
 
 bool VideoPlayer::Play(const Campaign &campaign) {
@@ -105,10 +87,15 @@ bool VideoPlayer::Play(const Campaign &campaign) {
             dup2(devNull, STDERR_FILENO);
             close(devNull);
         }
-        std::string wid = std::to_string(static_cast<unsigned long>(videoWindow_));
-        execlp("mpv", "mpv", ("--wid=" + wid).c_str(), "--loop-file=inf",
-               "--mute=yes", "--no-osc", "--no-input-default-bindings",
-               "--really-quiet", "--hwdec=auto", streamUrl.c_str(),
+        std::string wid = "--wid=" + std::to_string(static_cast<unsigned long>(videoWindow_));
+        std::string ytdlFormat = std::string("--ytdl-format=") + kYtdlFormatSelector;
+        // ytdl_hook do mpv por padrão procura o binário "youtube-dl"; no
+        // Armbian normalmente só existe "yt-dlp" no PATH, então apontamos
+        // explicitamente (opção documentada do próprio ytdl_hook.lua).
+        const char *ytdlPathOpt = "--script-opts=ytdl_hook-ytdl_path=yt-dlp";
+        execlp("mpv", "mpv", wid.c_str(), "--loop-file=inf", "--mute=yes", "--no-osc",
+               "--no-input-default-bindings", "--really-quiet", "--hwdec=auto", "--ytdl=yes",
+               ytdlPathOpt, ytdlFormat.c_str(), streamUrl.c_str(),
                static_cast<char *>(nullptr));
         _exit(127);
     }

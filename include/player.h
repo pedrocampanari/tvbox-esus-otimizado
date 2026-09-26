@@ -20,8 +20,13 @@ namespace kiosk {
 // posicionada sobre a área do banner e delega a decodificação/desenho a
 // um processo `mpv` externo (`--wid=<janela>`), pra aproveitar decode por
 // hardware e isolar crashes de decoder do processo principal. Nunca usa
-// iframe/webview — para vídeos de YouTube/Instagram/Facebook, resolve
-// antes uma URL de stream direta via `yt-dlp -g`.
+// iframe/webview — para vídeos de YouTube/Instagram/Facebook, a URL
+// original é passada direto pro mpv, que resolve via seu hook interno
+// (`ytdl_hook`, que por sua vez chama `yt-dlp`), em vez de nós mesmos
+// chamarmos `yt-dlp -g` e tentarmos montar a URL de stream. Ver
+// docs/memory/known-issues.md item 5 pro porquê dessa escolha (yt-dlp
+// sozinho, sem stream progressiva disponível, imprime vídeo e áudio em
+// URLs separadas — só o mpv sabe tocar isso sem precisar de mux).
 class VideoPlayer {
 public:
     VideoPlayer();
@@ -52,8 +57,8 @@ private:
     Window videoWindow_ = 0;
     pid_t mpvPid_ = -1;
 
-    // Resolve a URL reproduzível pro mpv: passthrough para upload/direto,
-    // `yt-dlp -g` para youtube/instagram/facebook.
+    // Valida a URL da campanha (trata "TODO"/vazio) e a repassa como
+    // está — o mpv que resolve internamente se não for um arquivo direto.
     std::string ResolveStreamUrl(const Campaign &campaign) const;
 };
 

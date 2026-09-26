@@ -64,15 +64,31 @@ sempre**, porque ela não tem uma unidade associada.
   stream direta; para upload/direto, a URL já é reproduzível e vai direto
   pro player. Ver [[architecture]] para o desenho do módulo de player.
 
-## Paleta e tipografia (tokens reais do CSS)
+## Paleta e tipografia (tokens reais do CSS + confirmação ao vivo)
 | Uso | Cor |
 |---|---|
 | Fundo geral da página (`display-page`) | `#0b1c33` |
-| Fundo de header/footer (`tv-chrome`, default configurável) | `#0d47a1` |
+| Fundo do **header** (`tv-chrome-header`) | `#0d47a1` (`rgb(13,71,161)`) |
+| Fundo do **footer** (`tv-chrome-footer`) | **`#f41515`** (`rgb(244,21,21)`) — **vermelho, diferente do header** |
 | Texto de header/footer | `#ffffff` |
 | Fundo de mídia/letterbox (vídeo, imagem, texto) | `#06121f` |
 | Texto de campanha (título/corpo) | `#ffffff` |
 | Destaque/subtítulo (`--tc-accent`) | `#bfdbfe` |
+
+> A primeira versão deste documento assumia (a partir do HTML puro, sem
+> JS) que header e footer usavam a mesma cor azul — era só o estado
+> técnico de fallback genérico da rota `/display` sem unidade. Inspeção
+> ao vivo via `claude-in-chrome` em 2026-09-26 (painel real em produção)
+> confirmou que o footer é **vermelho**, e que header/footer têm duas
+> linhas cada: um título em negrito uppercase + um subtítulo menor
+> (ex.: header "PREFEITURA MUNICIPAL" / "Secretaria Municipal de Saúde";
+> footer "TRÊS LAGOAS/MS" / "Cada dia melhor"), via as classes
+> `.tv-chrome-text` (título) e `.tv-chrome-subtext` (subtítulo, opacity
+> .85). `getComputedStyle` confirmou a fonte real: `system-ui,
+> -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica
+> Neue", Arial, sans-serif` — nosso app usa Liberation Sans (metric
+> compatível com Arial) como substituto formal, ver [[known-issues]]
+> item 3.
 
 - Fonte: pilha `system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica
   Neue", Arial, sans-serif` (chamada de "sistema" na configuração).

@@ -32,6 +32,7 @@ add_executable(${PROJECT_NAME}
   src/player.cpp
   src/ui.cpp
   src/procexec.cpp
+  src/campaign_store.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)

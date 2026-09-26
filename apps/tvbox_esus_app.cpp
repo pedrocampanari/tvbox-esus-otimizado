@@ -13,6 +13,7 @@
 #include "raylib.h"
 
 #include "campaign.h"
+#include "campaign_store.h"
 #include "config.h"
 #include "player.h"
 #include "procexec.h"
@@ -93,7 +94,18 @@ int main() {
     SetWindowPosition(0, 0);
     SetTargetFPS(30); // slideshow estático na maior parte do tempo: 30fps já sobra e economiza CPU/energia no RK3229.
 
-    std::thread scraperThread(ScraperThreadLoop, std::string(kDisplayUrl));
+    LoadUiFonts();
+
+    std::thread scraperThread;
+    if (kUseLiveScraping) {
+        scraperThread = std::thread(ScraperThreadLoop, std::string(kDisplayUrl));
+    } else {
+        // Modo padrão (ver include/config.h): lista fixa, carregada uma
+        // única vez — sem ficar buscando a URL original o tempo todo.
+        std::vector<Campaign> fixed = LoadFixedCampaigns(kFixedCampaignsConfigPath);
+        std::lock_guard<std::mutex> lock(g_campaignsMutex);
+        g_campaigns = std::move(fixed);
+    }
 
     VideoPlayer player;
     bool playerReady = player.Init(0, 0, windowW, windowH);
@@ -167,9 +179,10 @@ int main() {
 
         BeginDrawing();
         ClearBackground(kColorAppBackground);
-        DrawChromeBar(headerRect, "Secretaria Municipal de Saude", kColorChromeBackground,
+        DrawChromeBar(headerRect, kHeaderTitle, kHeaderSubtitle, kColorHeaderBackground,
                       kColorChromeText);
-        DrawChromeBar(footerRect, "Tres Lagoas/MS", kColorChromeBackground, kColorChromeText);
+        DrawChromeBar(footerRect, kFooterTitle, kFooterSubtitle, kColorFooterBackground,
+                      kColorChromeText);
 
         switch (activeType) {
             case CampaignType::Texto:
@@ -186,10 +199,11 @@ int main() {
     }
 
     g_running.store(false);
-    scraperThread.join();
+    if (scraperThread.joinable()) scraperThread.join();
 
     if (imageTexture.id != 0) UnloadTexture(imageTexture);
     player.Stop();
+    UnloadUiFonts();
     CloseWindow();
     return 0;
 }

@@ -15,10 +15,11 @@ tvbox_esus_app (Raylib, C++)
  ├─ thread de scraping: poll HTTP a cada N segundos (default 30s, mesmo
  │  intervalo do fallback do app original) — não mantém conexão persistente
  └─ quando o slide ativo é vídeo:
-     ├─ resolve URL de stream (direto, ou via processo yt-dlp pontual)
-     └─ spawna um processo `mpv --wid=<janela X11 filha>` posicionado
-        exatamente sobre a área do banner; mpv decodifica e desenha
-        diretamente nessa janela X11 (fora do pipeline do Raylib/OpenGL)
+     └─ spawna um processo `mpv --wid=<janela X11 filha> --ytdl=yes ...`
+        posicionado exatamente sobre a área do banner, passando a URL da
+        campanha como está; o próprio mpv resolve internamente (via seu
+        hook `ytdl_hook` + `yt-dlp`) quando não é um arquivo direto, e
+        decodifica/desenha nessa janela X11 (fora do pipeline Raylib/OpenGL)
 ```
 
 Raylib nunca desenha o vídeo em si — ele só existe pra decidir "agora é
@@ -46,31 +47,73 @@ problema real no hardware (ver [[known-issues]]).
 - `include/config.h` — constantes de configuração: fração da janela
   (0.25 largura / 1.0 altura), paleta de cores (tokens do
   [[frontend-contract]]), URL do display, intervalos de polling/timeout.
+  Inclui `raylib.h` (por causa do tipo `Color`) — por isso **não pode
+  ser incluído por `player.cpp`/`player.h`** (ver `include/video_config.h`
+  logo abaixo e a nota de "Restrição de headers").
+- `include/video_config.h` — constantes que `include/player.h`/
+  `src/player.cpp` precisam mas que não podem vir de `config.h` (ver
+  nota de "Restrição de headers" abaixo). Hoje só tem
+  `kYtdlFormatSelector`; `config.h` inclui este header também, então
+  código que só conhece `config.h` continua enxergando essas constantes
+  normalmente.
+- `include/campaign_store.h` / `src/campaign_store.cpp` — **fonte de
+  conteúdo padrão (v1)**: lê `config/campaigns.conf` (formato
+  chave=valor simples, documentado no cabeçalho do próprio arquivo) uma
+  única vez na inicialização e monta a lista de `Campaign`. Autorizado
+  pelo dono do sistema em 2026-09-26 usar uma lista FIXA de vídeos por
+  enquanto, então **não há nenhuma requisição de rede em runtime** nesse
+  modo — ver [[known-issues]] item 1 para o porquê e para o estado de
+  preenchimento do arquivo (títulos reais confirmados, `video_url`
+  ainda pendente).
 - `include/scraper.h` / `src/scraper.cpp` — busca e interpreta o HTML da
   página `/display` procurando vídeos/imagens (requisito explícito do
   projeto: nada de iframe, o app tem que "sair procurando" a mídia).
-  **Limitação conhecida e documentada em** [[known-issues]]: a página real
-  renderiza o conteúdo client-side depois de buscar dados num backend: o
-  HTML puro (o que `curl` vê) só contém o placeholder "Aguardando
-  informações". Um scraper puramente HTTP não vai encontrar vídeos reais
-  até essa lacuna ser resolvida (ver known-issues para as opções
-  cogitadas e por que nenhuma foi escolhida ainda sem confirmação do
-  usuário).
+  **Não usado por padrão** (`kUseLiveScraping = false` em
+  `include/config.h`) desde que a lista fixa foi autorizada — o código
+  fica pronto pra religar se essa decisão mudar. Limitação conhecida e
+  documentada em [[known-issues]]: a página real renderiza o conteúdo
+  client-side depois de buscar dados num backend; o HTML puro (o que
+  `curl` vê) só contém o placeholder "Aguardando informações". Um
+  scraper puramente HTTP não vai encontrar vídeos reais até essa lacuna
+  ser resolvida (ver known-issues para as opções cogitadas).
 - `include/player.h` / `src/player.cpp` — dado um `Campaign` de vídeo:
-  1. Se `video_origem` for `upload`/`direto`, usa a URL como está.
-  2. Se for `youtube`/`instagram`/`facebook`, roda `yt-dlp -g <url
-     original>` (processo pontual, sem daemon) pra obter a URL de stream
-     direta, replicando as regras de extração de ID/URL documentadas em
-     [[frontend-contract]] — mas resolvendo pra reprodução direta via
-     `mpv`, nunca embutindo o player oficial da plataforma (nunca iframe).
-  3. Cria/reaproveita uma janela X11 filha (Xlib puro, sem depender de
-     internals do GLFW/Raylib) posicionada sobre a área do banner e
-     lança `mpv --wid=<id> --loop-file=inf --mute=yes ...`.
+  1. Cria/reaproveita uma janela X11 filha (Xlib puro, sem depender de
+     internals do GLFW/Raylib — por isso `player.cpp` não pode incluir
+     `raylib.h`/`include/config.h`; ver `include/video_config.h`)
+     posicionada sobre a área do banner.
+  2. Lança `mpv --wid=<id> --loop-file=inf --mute=yes --ytdl=yes
+     --ytdl-format=<kYtdlFormatSelector> ...` passando a URL da campanha
+     **como está** (arquivo direto para `upload`/`direto`; URL original
+     do post/vídeo para `youtube`/`instagram`/`facebook`). Nunca
+     embutimos o player oficial da plataforma (nunca iframe).
+  3. Para `youtube`/`instagram`/`facebook`, quem resolve a URL de stream
+     é o próprio `mpv`, via seu hook interno `ytdl_hook` (que chama
+     `yt-dlp`) — **não chamamos `yt-dlp -g` nós mesmos**. Decisão tomada
+     depois de testar de verdade e confirmar que `yt-dlp -g` sozinho,
+     sem stream progressiva disponível (comum hoje no YouTube), imprime
+     vídeo e áudio em URLs separadas; só o `mpv` sabe tocar isso sem
+     mux/ffmpeg. Ver [[known-issues]] item 5.
   4. Ao trocar de slide, desmapeia (hide) a janela do mpv e mata o
      processo; ao voltar pra um slide de vídeo, recria.
-- `include/ui.h` / `src/ui.cpp` — desenho Raylib do chrome (header/footer)
-  e dos slides de texto/imagem, usando exatamente a paleta/tipografia do
-  [[frontend-contract]].
+- `include/ui.h` / `src/ui.cpp` — desenho Raylib do chrome (header/footer,
+  cada um com título+subtítulo, cores diferentes entre si — header azul,
+  footer vermelho) e dos slides de texto/imagem, usando exatamente a
+  paleta/tipografia do [[frontend-contract]]. Tipografia: Liberation
+  Sans carregada de `assets/fonts/` (ver [[known-issues]] item 3), não a
+  fonte bitmap padrão do Raylib.
+
+## Restrição de headers: `player.cpp`/`player.h` nunca podem incluir `raylib.h`
+Descoberto testando de verdade em 2026-09-26 (não é teórico): `<X11/
+Xlib.h>` faz `typedef XID Font;` (um inteiro); `raylib.h` faz `typedef
+struct Font {...} Font;` (uma struct). Incluir os dois na mesma
+translation unit é erro de compilação (`using typedef-name 'Font' after
+'struct'`), não um simples aviso. Por isso `include/player.h` só usa
+forward declarations de `Display`/`Window` (nunca inclui `Xlib.h` no
+header) e `src/player.cpp` nunca inclui `include/config.h` nem
+`raylib.h` — qualquer constante que `player.cpp` precisar vai em
+`include/video_config.h` (sem dependência de raylib), nunca em
+`config.h`. Se precisar adicionar uma constante nova pro player, o
+lugar certo é `video_config.h`.
 
 ## Janela fixa 25% x 100%
 No `main()`, antes do primeiro frame: pega `GetMonitorWidth/Height` do
@@ -95,8 +138,9 @@ para não virar mágica espalhada pelo código.
   pro driver Rockchip MPP do RK3229) — nunca decode de vídeo em software
   dentro do processo principal.
 - Um único binário C++ (raylib estático via FetchContent) — sem runtime
-  adicional (nada de Node/Python/Electron; `yt-dlp` é Python mas só roda
-  pontualmente, por vídeo externo, não fica residente).
+  adicional (nada de Node/Python/Electron; `yt-dlp` é Python, mas quem o
+  invoca é o próprio `mpv` — via `ytdl_hook` — só quando o vídeo não é
+  um arquivo direto, e não fica residente).
 
 ## Build
 - `CMakeLists.txt` é o build system canônico (já resolve a dependência do
@@ -106,8 +150,20 @@ para não virar mágica espalhada pelo código.
   `make run`, `make clean`) — mantido porque já existia no repo, mas não
   é mais um segundo pipeline de compilação C independente.
 - Dependências de runtime no dispositivo alvo (fora do binário): `mpv`,
-  `yt-dlp` (+ `python3`), `curl`. Nenhuma delas está instalada nesta
-  sandbox de desenvolvimento (x86_64, sem Armbian) — o binário foi
-  compilado e checado localmente, mas o fluxo de vídeo real (spawn do
-  mpv, resolução via yt-dlp) não foi executado de ponta a ponta neste
-  ambiente. Ver [[known-issues]] e [[session-handoff]].
+  `yt-dlp` (+ `python3`), `curl` (só necessário se `kUseLiveScraping`
+  voltar a `true`). Testado de verdade nesta sandbox depois de instalar
+  `mpv`/`yt-dlp` (ver [[known-issues]] item 5 e [[session-handoff]]) —
+  o pipeline de resolução/spawn funciona; só a composição visual final
+  não pôde ser confirmada aqui (ambiente Wayland, não Xorg puro).
+  **Importante**: `yt-dlp` instalado via `apt` trava numa versão antiga
+  do repositório Debian e simplesmente para de funcionar contra o
+  YouTube (confirmado: a versão do apt não conseguia extrair nenhum
+  formato de vídeo real). Instalar via pip (`pip3 install --user
+  --upgrade yt-dlp`) ou binário standalone, e manter atualizado — `apt`
+  não é uma fonte confiável pra isso.
+- **Arquivos além do binário que precisam acompanhar o deploy**: o app
+  usa caminhos relativos (`assets/fonts/...`, `config/campaigns.conf`),
+  resolvidos a partir do diretório de trabalho atual — por isso precisa
+  ser executado com a raiz do projeto como cwd (é o que `make run` já
+  faz). Ao empacotar pro dispositivo, copiar `assets/` e `config/`
+  junto do binário, mantendo essa mesma estrutura relativa.

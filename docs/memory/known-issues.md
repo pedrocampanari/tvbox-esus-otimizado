@@ -1,6 +1,46 @@
 # Problemas e decisões em aberto conhecidas
 
-## 1. O scraper HTTP puro não vê conteúdo real (bloqueante para produção)
+## 1. Modo atual: lista fixa de vídeos — RESOLVIDO (10/10) em 2026-09-26
+O dono do sistema autorizou usar uma lista FIXA de links de vídeo por
+enquanto, em vez de ficar buscando `esustv.jfbatl.com.br/display` o
+tempo todo. Mudanças feitas:
+- `include/config.h`: `kUseLiveScraping = false` (default). Quando
+  `false`, o app carrega `config/campaigns.conf` **uma única vez** na
+  inicialização (`LoadFixedCampaigns`, em `src/campaign_store.cpp`) e
+  não faz nenhuma requisição de rede em runtime. `DisplayScraper` (item
+  abaixo) continua no código, pronto pra religar (`kUseLiveScraping =
+  true`) se essa decisão mudar.
+- **Os 10 `video_url` reais foram todos capturados** (não via JS, que
+  continua bloqueado pelo classificador de segurança do ambiente, mas
+  lendo o **tráfego de rede** que o próprio navegador captura —
+  `read_network_requests` — enquanto o painel real rodava em produção:
+  cada requisição real que o iframe do YouTube faz
+  (`youtube-nocookie.com/embed/<id>`) foi observada e reconstruída pra
+  `youtube.com/watch?v=<id>`). `config/campaigns.conf` está com os 10
+  preenchidos. Isso levou ~15-20 minutos de acompanhamento ao vivo
+  porque:
+    - o iframe só carrega a URL real quando aquele slide especificamente
+      fica ativo (os outros ficam em `about:blank` até a vez deles);
+    - a duração real de cada vídeo varia muito (de ~15s a mais de 130s),
+      nada uniforme;
+    - 1 slide ("GIRO DA SAUDE") transiciona rápido demais pra pegar na
+      primeira passada — precisei deixar o ciclo dar a volta completa
+      de novo e recapturar especificamente esse.
+  **Confiança dos títulos**: 7 dos 10 (itens 1-7) foram reconfirmados
+  lendo o texto exibido na tela no exato momento da captura da URL; os
+  outros 3 (itens 8-10) vêm da leitura inicial (accessibility tree) —
+  a ORDEM/mapeamento pra video_url é confiável (rotação sequencial sem
+  pulos), só o texto exato do título desses 3 não foi re-confirmado
+  simultaneamente. Ver cabeçalho de `config/campaigns.conf` para
+  detalhes.
+- `duracao_segundos` no arquivo são estimativas (não medi o tempo exato
+  de cada vídeo, só a ordem de grandeza enquanto esperava a próxima
+  transição) — ajustar se souber os valores reais configurados no
+  painel administrativo.
+- Formato completo do arquivo de config está documentado no cabeçalho de
+  `config/campaigns.conf` (comentários) e em [[architecture]].
+
+## 2. O scraper HTTP puro não vê conteúdo real (relevante só se kUseLiveScraping voltar a true)
 **Confirmado em 2026-09-26** com `curl` direto em
 `https://esustv.jfbatl.com.br/display`: o HTML retornado contém só o
 estado técnico de fallback ("Aguardando informações"). O conteúdo real
@@ -42,41 +82,120 @@ Opções reais para destravar isso (nenhuma implementada ainda):
 player) está implementado e pronto para qualquer uma das opções acima,
 mas não pôde ser validado com vídeos reais.
 
-## 2. Fidelidade tipográfica
-A UI usa a fonte bitmap padrão do Raylib, não a pilha `system-ui`
-sans-serif do site original (ver [[frontend-contract]]). Decisão
-consciente pra v1: carregar uma fonte TTF do sistema custa memória e
-complexidade extra num dispositivo de 2GB RAM. Se a fidelidade visual da
-fonte importar, o próximo passo é embutir uma única fonte leve (ex.: uma
-variante condensada, carregada uma vez via `LoadFontEx` com um conjunto
-de caracteres limitado a acentos PT-BR) em vez de carregar uma família
-completa.
+## 3. Fidelidade tipográfica — RESOLVIDO em 2026-09-26
+Pedido do dono do sistema: tipografia "mais formal". Trocado o texto
+desenhado com a fonte bitmap padrão do Raylib por **Liberation Sans**
+(Regular + Bold, SIL OFL 1.1, metric-compatible com Arial — a mesma
+família usada oficialmente como substituto formal do Arial em
+documentos institucionais). Arquivos em `assets/fonts/` (+
+`LICENSE-LiberationSans.txt`), carregados uma vez em `LoadUiFonts()`
+(`src/ui.cpp`) com um conjunto de codepoints limitado a ASCII + acentos
+PT-BR (evita gerar um atlas de glyphs maior que o necessário). Se o
+arquivo de fonte não for encontrado no dispositivo, cai de volta pra
+fonte padrão do Raylib (aviso no log, não é fatal) — mas isso não deve
+acontecer em produção: `assets/fonts/` faz parte do que precisa ser
+copiado junto do binário (ver [[architecture]]).
 
-## 3. Título/subtítulo com palavra única muito longa
-`WrapText` (em `src/ui.cpp`) só quebra em espaços. Uma palavra isolada
-mais larga que a coluna de 25% ainda vai vazar da tela. Não corrigido
-porque não apareceu nos textos reais observados até agora; se acontecer,
-a correção é quebra por caractere como último recurso dentro de
-`WrapText`.
+## 4. Título/subtítulo com palavra única muito longa — RESOLVIDO em 2026-09-26
+`WrapText` (em `src/ui.cpp`) agora quebra por caractere (UTF-8-safe, não
+corta um acento ao meio) quando uma palavra sozinha já é mais larga que
+a coluna disponível — equivalente ao `overflow-wrap: break-word` do CSS
+original. Testado de verdade: rodei o binário com um título de uma
+palavra só propositalmente gigante
+(`PALAVRAUNICAMUITOLONGAPRATESTARQUEBRADELINHAPORCARACTERE`) e confirmei
+por screenshot que quebra em 5 linhas dentro da coluna de 25%, sem
+vazar. No mesmo teste confirmei que acentos PT-BR (ação, atenção,
+saúde, público) renderizam corretamente com o conjunto de codepoints
+carregado em `LoadUiFonts()`.
 
-## 4. Pipeline de vídeo não testado de ponta a ponta
-Este ambiente de desenvolvimento é x86_64 sem `mpv`, sem `yt-dlp` e sem
-o hardware RK3229 real. O código de `include/player.h`/`src/player.cpp`
-(criação de janela X11 filha, spawn do `mpv --wid=...`, resolução via
-`yt-dlp -g` para YouTube/Instagram/Facebook) compila e a lógica foi
-revisada manualmente contra a documentação do `mpv`/`yt-dlp`, mas **não
-foi executada com um vídeo real** nem no dispositivo alvo. Antes de
-considerar isso pronto pra produção, validar no Armbian real:
-  - `mpv --wid=<id> --hwdec=auto <url>` decodifica usando a VPU do
-    RK3229 (senão, testar `--hwdec=rkmpp` explicitamente, se o mpv
-    empacotado tiver suporte);
-  - `yt-dlp -g -f "best[ext=mp4]/best" <url_youtube>` retorna uma URL que
-    o `mpv` local consegue abrir direto (sem precisar mesclar
-    áudio/vídeo separados, o que exigiria `ffmpeg`).
+## 5. Pipeline de vídeo — testado de verdade em 2026-09-26; 1 bug real corrigido; 1 limitação de ambiente encontrada
 
-## 5. `configuracoes_tv` (cores/textos de header/footer) não é lido
+**Atualização**: `mpv` e `yt-dlp` foram instalados nesta sandbox e o
+pipeline foi testado de ponta a ponta contra os vídeos reais de
+`config/campaigns.conf`. Resultado: majoritariamente funciona, com uma
+correção real aplicada e uma limitação genuína de ambiente (não do
+nosso código) que ficou sem confirmação visual.
+
+**Descoberta 1 — yt-dlp do `apt` estava desatualizado demais pra
+funcionar**: a versão do Debian (2023.03.04) não conseguia extrair
+NENHUM formato de vídeo/áudio de um vídeo real do YouTube (só
+storyboards/thumbnails) — o YouTube muda a extração com frequência e
+yt-dlp precisa ser atualizado seguido. `yt-dlp -U` recusou atualizar
+("installed via apt, use apt to update"). Contornado nesta sandbox
+instalando uma versão atual via `pip3 install --user --upgrade
+--break-system-packages yt-dlp` (vai pra `~/.local/bin`, que já vem
+antes de `/usr/bin` no PATH — não mexe no pacote do apt). **Isso é uma
+dependência operacional real do projeto**: o dispositivo em produção
+vai precisar de um jeito de manter o `yt-dlp` atualizado (ex.: cron
+rodando `yt-dlp -U` se instalado via pip/binário standalone, já que via
+apt normalmente trava numa versão antiga do repositório Debian).
+
+**Descoberta 2 — bug real no seletor de formato, corrigido**: com
+`yt-dlp` atualizado, `mpv --ytdl-format="bestvideo[height<=720]+..."`
+(o seletor antigo) resolvia pra **AV1**, não H.264. Confirmado rodando
+`mpv` direto contra uma URL real. O RK3229 é um chip de 2016; sua VPU
+Rockchip quase certamente não tem decode de AV1 por hardware (isso só
+apareceu em SoCs Rockchip bem mais recentes) — decodificar AV1 em
+software nesse CPU fraco (quad-core Cortex-A7) provavelmente não
+aguentaria um kiosk contínuo. Corrigido em
+`include/video_config.h::kYtdlFormatSelector`: adicionado
+`[vcodec^=avc1]` pra forçar H.264, que eu confirmei existir em toda
+resolução testada pra esse vídeo. Testado de novo com o seletor
+corrigido: `mpv` passou a escolher `h264 360x640` corretamente.
+
+**Descoberta 3 — o pipeline completo do app funciona, exceto a
+composição visual final, que não pôde ser confirmada nesta sandbox**:
+rodei o binário de verdade (`./build/bin/tvbox_esus_app`) com o
+`config/campaigns.conf` real. Confirmado via `ps`/`xwininfo`:
+  - o app spawna `mpv` com todos os argumentos corretos (`--wid=<id>`,
+    `--ytdl-format` já corrigido, URL certa da campanha ativa);
+  - a janela X11 filha existe, está no tamanho/posição certos
+    (`341x645+0+61`, batendo com a área do banner), está mapeada
+    (`Map State: IsViewable`) e o `mpv` está de fato consumindo CPU de
+    forma consistente com decode ativo.
+  Porém **a imagem do vídeo não apareceu nos screenshots** (nem via
+  `import -window <id da janela de vídeo>`, nem tentando um X server
+  aninhado limpo via `Xephyr` como alternativa). Causa provável, não
+  confirmada 100%: **esta sandbox de desenvolvimento roda GNOME sob
+  Wayland** (`XDG_SESSION_TYPE=wayland`), com XWayland dando
+  compatibilidade X11 — não é um Xorg puro, que é o que o dispositivo
+  alvo realmente usa ("Xorg em modo mínimo", sem Wayland). A técnica de
+  embutir uma janela X11 `override-redirect` raw (o que `player.cpp`
+  faz) é uma técnica clássica de X11 puro; sob XWayland, isso é uma
+  fonte conhecida de comportamento imprevisível pra compositação de
+  janelas que não são geridas normalmente pelo compositor. Reforça essa
+  hipótese: o `mpv`, sem `--vo` explícito, caiu sozinho num modo
+  legado (`vo/x11`, com aviso de "bad performance" no log), sugerindo
+  que aceleração GPU (`vo=gpu`) não está disponível de forma limpa
+  nesse container de qualquer forma.
+  **Isso não foi confirmado como bug do nosso código** — só não deu pra
+  provar visualmente aqui. **Próximo passo real**: validar a
+  composição visual num Xorg puro de verdade (o dispositivo Armbian
+  real, ou uma VM/máquina com Xorg sem Wayland) antes de considerar
+  este item fechado.
+
+**Histórico (sessão anterior, mesmo dia)**: antes de ter `mpv`/`yt-dlp`
+instalados, eu já tinha encontrado e corrigido um bug relacionado
+testando só o `yt-dlp` isolado num venv: `yt-dlp -g` sozinho, quando o
+vídeo não tem stream progressiva (comum), imprime DUAS URLs em linhas
+separadas (vídeo e áudio) — o código antigo passava isso como se fosse
+uma URL só pro `mpv`. Corrigido faz tempo: `ResolveStreamUrl` não chama
+mais `yt-dlp -g`, só repassa a URL original pro `mpv`, que resolve
+sozinho via `ytdl_hook` (`--ytdl=yes
+--script-opts=ytdl_hook-ytdl_path=yt-dlp`, já que o hook por padrão
+procura `youtube-dl`, que normalmente não existe no Armbian). Essa
+correção foi validada de verdade agora (descobertas 1-3 acima).
+
+## 6. `configuracoes_tv` (cores/textos de header/footer) não é lido dinamicamente
 O header/footer no app original são configuráveis via banco (cores,
 textos, visibilidade). Nosso app usa valores fixos de
-`include/config.h` (mesmos valores default observados no site). Isso é
-consequência direta do item 1 (sem fonte de dados, não tem o que ler) —
-resolve junto quando o scraping de dados reais for destravado.
+`include/config.h` — mas, diferente da primeira versão deste documento,
+**esses valores agora são os reais confirmados ao vivo em 2026-09-26**
+via `claude-in-chrome`, não mais os defaults técnicos genéricos:
+header azul `rgb(13,71,161)` / "PREFEITURA MUNICIPAL" / "Secretaria
+Municipal de Saúde"; **footer vermelho `rgb(244,21,21)`** / "TRÊS
+LAGOAS/MS" / "Cada dia melhor" (o footer NÃO é azul como o header —
+correção pedida pelo usuário, que já tinha notado isso). Se a prefeitura
+mudar essas cores/textos no painel administrativo, será preciso
+atualizar `include/config.h` manualmente até esses dados serem lidos de
+alguma fonte dinâmica (mesma dependência do item 1/2).

@@ -6,9 +6,20 @@
 
 namespace kiosk {
 
-// Desenha a barra de topo/rodapé do "tv-chrome" (fundo colorido + texto
-// uppercase centralizado), replicando o header/footer do site original.
-void DrawChromeBar(Rectangle area, const char *text, Color background, Color foreground);
+// Carrega/libera a tipografia formal (Liberation Sans, ver
+// include/config.h) usada por todas as funções de desenho abaixo.
+// Init deve ser chamado uma vez depois de InitWindow(); Shutdown antes
+// de CloseWindow(). Se o arquivo de fonte não for encontrado, cai de
+// volta pra fonte padrão do Raylib (log de aviso, não é fatal).
+void LoadUiFonts();
+void UnloadUiFonts();
+
+// Desenha a barra de topo/rodapé do "tv-chrome" (fundo colorido + título
+// uppercase + subtítulo menor, ambos centralizados), replicando o
+// header/footer do site original (que tem cores diferentes entre os
+// dois — ver include/config.h).
+void DrawChromeBar(Rectangle area, const char *title, const char *subtitle,
+                    Color background, Color foreground);
 
 // Desenha um slide de texto (título/subtítulo/corpo), replicando as
 // classes .text-campaign* do CSS original dentro da área do banner.

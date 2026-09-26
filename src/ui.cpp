@@ -1,6 +1,7 @@
 #include "ui.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <sstream>
 #include <vector>
 
@@ -10,21 +11,94 @@ namespace kiosk {
 
 namespace {
 
+Font g_fontRegular{};
+Font g_fontBold{};
+bool g_fontsLoaded = false;
+
+// Conjunto de codepoints suficiente pra PT-BR (ASCII + acentos/cedilha
+// usados em português) — evita carregar o glyph set default (só
+// latin-1 básico) e mantém o footprint da textura da fonte pequeno.
+std::vector<int> BuildPortugueseCodepoints() {
+    std::vector<int> cps;
+    for (int c = 0x20; c <= 0x7e; ++c) cps.push_back(c); // ASCII imprimível
+    static const int extra[] = {
+        0xC0, 0xC1, 0xC2, 0xC3, 0xC7, 0xC8, 0xC9, 0xCA, 0xCD, 0xD3, 0xD4,
+        0xD5, 0xDA, 0xDC, 0xE0, 0xE1, 0xE2, 0xE3, 0xE7, 0xE8, 0xE9, 0xEA,
+        0xED, 0xF3, 0xF4, 0xF5, 0xFA, 0xFC,
+    };
+    for (int c : extra) cps.push_back(c);
+    return cps;
+}
+
+// Font é uma struct leve (ids/ponteiros); retornar por valor evita
+// pendurar uma referência num temporário quando cai no fallback
+// GetFontDefault() (que retorna por valor).
+Font RegularFont() { return g_fontsLoaded ? g_fontRegular : GetFontDefault(); }
+Font BoldFont() { return g_fontsLoaded ? g_fontBold : GetFontDefault(); }
+
 // Emula o clamp() do CSS: valor mínimo/preferencial(relativo à largura
 // da área)/máximo.
 float Clamp(float minVal, float preferredFractionOfWidth, float maxVal, float width) {
     return std::clamp(preferredFractionOfWidth * width, minVal, maxVal);
 }
 
-std::vector<std::string> WrapText(const std::string &text, int fontSize, float maxWidth) {
+// Tamanho em bytes do codepoint UTF-8 que começa em `lead`. Usado pra
+// quebrar palavras longas sem cortar um caractere acentuado (á, ã, ç...)
+// ao meio.
+size_t Utf8CharLen(unsigned char lead) {
+    if ((lead & 0x80) == 0x00) return 1;
+    if ((lead & 0xE0) == 0xC0) return 2;
+    if ((lead & 0xF0) == 0xE0) return 3;
+    if ((lead & 0xF8) == 0xF0) return 4;
+    return 1; // byte de continuação isolado/inválido: avança 1 pra não travar
+}
+
+// Quebra uma única "palavra" (sem espaços) que sozinha já é mais larga
+// que a coluna disponível, em pedaços que cabem — último recurso do
+// WrapText, equivalente ao `overflow-wrap: break-word` do CSS original.
+std::vector<std::string> BreakOversizedWord(const Font &font, const std::string &word,
+                                              float fontSize, float maxWidth) {
+    std::vector<std::string> chunks;
+    std::string current;
+    size_t i = 0;
+    while (i < word.size()) {
+        size_t charLen = std::min(Utf8CharLen(static_cast<unsigned char>(word[i])), word.size() - i);
+        std::string candidate = current + word.substr(i, charLen);
+        if (MeasureTextEx(font, candidate.c_str(), fontSize, 0.0f).x > maxWidth && !current.empty()) {
+            chunks.push_back(current);
+            current = word.substr(i, charLen);
+        } else {
+            current = candidate;
+        }
+        i += charLen;
+    }
+    if (!current.empty()) chunks.push_back(current);
+    return chunks;
+}
+
+std::vector<std::string> WrapText(const Font &font, const std::string &text, float fontSize,
+                                   float maxWidth) {
     std::vector<std::string> lines;
     std::istringstream words(text);
     std::string word;
     std::string line;
 
     while (words >> word) {
+        float wordWidth = MeasureTextEx(font, word.c_str(), fontSize, 0.0f).x;
+        if (wordWidth > maxWidth) {
+            if (!line.empty()) {
+                lines.push_back(line);
+                line.clear();
+            }
+            std::vector<std::string> chunks = BreakOversizedWord(font, word, fontSize, maxWidth);
+            for (size_t idx = 0; idx + 1 < chunks.size(); ++idx) lines.push_back(chunks[idx]);
+            if (!chunks.empty()) line = chunks.back(); // pode ainda combinar com a próxima palavra
+            continue;
+        }
+
         std::string candidate = line.empty() ? word : line + " " + word;
-        if (MeasureText(candidate.c_str(), fontSize) > maxWidth && !line.empty()) {
+        float w = MeasureTextEx(font, candidate.c_str(), fontSize, 0.0f).x;
+        if (w > maxWidth && !line.empty()) {
             lines.push_back(line);
             line = word;
         } else {
@@ -35,18 +109,57 @@ std::vector<std::string> WrapText(const std::string &text, int fontSize, float m
     return lines;
 }
 
-void DrawCenteredText(const char *text, int fontSize, Color color, float centerX, float y) {
-    int width = MeasureText(text, fontSize);
-    DrawText(text, static_cast<int>(centerX - width / 2.0f), static_cast<int>(y), fontSize, color);
+void DrawCenteredText(const Font &font, const char *text, float fontSize, Color color,
+                      float centerX, float y) {
+    float width = MeasureTextEx(font, text, fontSize, 0.0f).x;
+    DrawTextEx(font, text, {centerX - width / 2.0f, y}, fontSize, 0.0f, color);
 }
 
 } // namespace
 
-void DrawChromeBar(Rectangle area, const char *text, Color background, Color foreground) {
+void LoadUiFonts() {
+    std::vector<int> codepoints = BuildPortugueseCodepoints();
+    g_fontRegular = LoadFontEx(kFontRegularPath, 64, codepoints.data(),
+                                static_cast<int>(codepoints.size()));
+    g_fontBold = LoadFontEx(kFontBoldPath, 64, codepoints.data(),
+                              static_cast<int>(codepoints.size()));
+
+    if (g_fontRegular.texture.id == 0 || g_fontBold.texture.id == 0) {
+        TraceLog(LOG_WARNING,
+                  "UI: nao foi possivel carregar Liberation Sans (%s / %s); usando fonte padrao do Raylib.",
+                  kFontRegularPath, kFontBoldPath);
+        g_fontsLoaded = false;
+        return;
+    }
+    SetTextureFilter(g_fontRegular.texture, TEXTURE_FILTER_BILINEAR);
+    SetTextureFilter(g_fontBold.texture, TEXTURE_FILTER_BILINEAR);
+    g_fontsLoaded = true;
+}
+
+void UnloadUiFonts() {
+    if (!g_fontsLoaded) return;
+    UnloadFont(g_fontRegular);
+    UnloadFont(g_fontBold);
+    g_fontsLoaded = false;
+}
+
+void DrawChromeBar(Rectangle area, const char *title, const char *subtitle, Color background,
+                    Color foreground) {
     DrawRectangleRec(area, background);
-    int fontSize = static_cast<int>(Clamp(14.0f, 0.045f, 22.0f, area.width));
-    DrawCenteredText(text, fontSize, foreground, area.x + area.width / 2.0f,
-                      area.y + (area.height - fontSize) / 2.0f);
+
+    float titleSize = Clamp(14.0f, 0.045f, 22.0f, area.width);
+    float subSize = Clamp(11.0f, 0.03f, 15.0f, area.width);
+    bool hasSubtitle = subtitle != nullptr && subtitle[0] != '\0';
+
+    float blockHeight = titleSize + (hasSubtitle ? subSize * 1.3f : 0.0f);
+    float y = area.y + (area.height - blockHeight) / 2.0f;
+
+    DrawCenteredText(BoldFont(), title, titleSize, foreground, area.x + area.width / 2.0f, y);
+    if (hasSubtitle) {
+        y += titleSize * 1.3f;
+        DrawCenteredText(RegularFont(), subtitle, subSize, Fade(foreground, 0.85f),
+                          area.x + area.width / 2.0f, y);
+    }
 }
 
 void DrawTextSlide(Rectangle area, const Campaign &campaign) {
@@ -58,18 +171,18 @@ void DrawTextSlide(Rectangle area, const Campaign &campaign) {
     float maxTextWidth = area.width - 2 * padding;
 
     if (!campaign.titulo.empty()) {
-        int titleSize = static_cast<int>(Clamp(20.0f, 0.11f, 48.0f, area.width));
-        for (const auto &line : WrapText(campaign.titulo, titleSize, maxTextWidth)) {
-            DrawCenteredText(line.c_str(), titleSize, kColorTextFg, centerX, y);
+        float titleSize = Clamp(20.0f, 0.11f, 48.0f, area.width);
+        for (const auto &line : WrapText(BoldFont(), campaign.titulo, titleSize, maxTextWidth)) {
+            DrawCenteredText(BoldFont(), line.c_str(), titleSize, kColorTextFg, centerX, y);
             y += titleSize * 1.2f;
         }
         y += titleSize * 0.15f;
     }
 
     if (!campaign.subtitulo.empty()) {
-        int subSize = static_cast<int>(Clamp(14.0f, 0.075f, 32.0f, area.width));
-        for (const auto &line : WrapText(campaign.subtitulo, subSize, maxTextWidth)) {
-            DrawCenteredText(line.c_str(), subSize, kColorTextAccent, centerX, y);
+        float subSize = Clamp(14.0f, 0.075f, 32.0f, area.width);
+        for (const auto &line : WrapText(RegularFont(), campaign.subtitulo, subSize, maxTextWidth)) {
+            DrawCenteredText(RegularFont(), line.c_str(), subSize, kColorTextAccent, centerX, y);
             y += subSize * 1.25f;
         }
     }
@@ -82,9 +195,9 @@ void DrawTextSlide(Rectangle area, const Campaign &campaign) {
     y += area.height * 0.04f;
 
     if (!campaign.texto.empty()) {
-        int bodySize = static_cast<int>(Clamp(14.0f, 0.06f, 26.0f, area.width));
-        for (const auto &line : WrapText(campaign.texto, bodySize, maxTextWidth)) {
-            DrawCenteredText(line.c_str(), bodySize, kColorTextFg, centerX, y);
+        float bodySize = Clamp(14.0f, 0.06f, 26.0f, area.width);
+        for (const auto &line : WrapText(RegularFont(), campaign.texto, bodySize, maxTextWidth)) {
+            DrawCenteredText(RegularFont(), line.c_str(), bodySize, kColorTextFg, centerX, y);
             y += bodySize * 1.45f;
         }
     }

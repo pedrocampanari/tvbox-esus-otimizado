@@ -26,11 +26,18 @@ Nesta ordem:
 ```
 apps/tvbox_esus_app.cpp   # entrypoint único (main + loop do kiosk)
 include/                  # headers dos módulos
-src/                      # implementação dos módulos (scraper, player, ui, procexec)
+src/                      # implementação dos módulos (scraper, player, ui, procexec, campaign_store)
+config/campaigns.conf     # lista FIXA de vídeos/campanhas (fonte de conteúdo padrão, ver known-issues)
+assets/fonts/             # Liberation Sans (tipografia formal, SIL OFL)
 CMakeLists.txt            # build canônico (resolve Raylib via FetchContent)
 Makefile                  # atalho fino sobre o CMake
 docs/memory/              # memória do projeto (ver acima)
 ```
+
+> O binário resolve `assets/` e `config/` como caminhos relativos ao
+> diretório de trabalho atual — rode-o sempre com a raiz do projeto
+> como cwd (`make run` já faz isso). Ao copiar pro dispositivo final,
+> leve `assets/` e `config/` junto do binário.
 
 ## Build
 
@@ -55,9 +62,12 @@ para compilar, só para o app funcionar de verdade em produção):
 ## Estado atual
 
 O app compila, abre a janela no tamanho/posição corretos e desenha o
-"chrome" (header/footer/slideshow) com a paleta e tipografia replicadas
-do site original. A busca de conteúdo real (vídeos/imagens/textos das
-campanhas) tem uma limitação de arquitetura bloqueante ainda não
-resolvida — ver o item 1 de
-[`docs/memory/known-issues.md`](docs/memory/known-issues.md) antes de
-assumir que isso já funciona em produção.
+"chrome" (header azul/footer vermelho, cada um com título+subtítulo) com
+a paleta e tipografia (Liberation Sans) confirmadas ao vivo no site
+original. O conteúdo é uma lista **fixa** de campanhas
+(`config/campaigns.conf`), por autorização do dono do sistema — sem
+scraping em runtime. Os 10 `video_url` reais já estão preenchidos.
+**O que falta antes de produção**: validar o player de vídeo (`mpv` +
+`ytdl_hook`) num dispositivo real — não testado nesta sandbox de
+desenvolvimento (sem `mpv` instalado, sem o hardware RK3229) — ver o
+item 5 de [`docs/memory/known-issues.md`](docs/memory/known-issues.md).
