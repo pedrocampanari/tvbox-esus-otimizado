@@ -33,13 +33,22 @@ add_executable(${PROJECT_NAME}
   src/ui.cpp
   src/procexec.cpp
   src/campaign_store.cpp
+  src/native_window.cpp
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE include)
+target_include_directories(${PROJECT_NAME} PRIVATE include
+  # Headers do GLFW vendorizado pelo raylib (src/native_window.cpp usa
+  # glfwGetX11Window/glfwGetPlatform pra obter o ID de janela X11
+  # nativo — ver include/native_window.h sobre o porquê). Só o header:
+  # os símbolos já estão dentro de libraylib.a (raylib embute os
+  # objetos do GLFW), então não precisamos linkar o alvo `glfw` também.
+  ${raylib_SOURCE_DIR}/src/external/glfw/include
+)
 
-# X11: janela dedicada onde o mpv desenha o vídeo (embedding via --wid),
-# sem depender de internals do Raylib/GLFW. Threads: thread de scraping
-# em segundo plano. Nenhuma lib de vídeo/HTTP é linkada — curl/mpv/yt-dlp
+# X11: janela FILHA da janela do Raylib onde o mpv desenha o vídeo
+# (embedding via --wid) — ver include/player.h sobre por que é filha,
+# não uma segunda janela top-level. Threads: thread de scraping em
+# segundo plano. Nenhuma lib de vídeo/HTTP é linkada — curl/mpv/yt-dlp
 # são invocados como processos externos (ver docs/memory/architecture.md).
 target_link_libraries(${PROJECT_NAME} PRIVATE raylib X11::X11 Threads::Threads)
 

@@ -108,153 +108,103 @@ vazar. No mesmo teste confirmei que acentos PT-BR (ação, atenção,
 saúde, público) renderizam corretamente com o conjunto de codepoints
 carregado em `LoadUiFonts()`.
 
-## 5. Pipeline de vídeo — testado de verdade em 2026-09-26; 1 bug real corrigido; 1 limitação de ambiente encontrada
+## 5. Pipeline de vídeo — RESOLVIDO em 2026-09-27 (vídeo posicionado corretamente, confirmado por screenshot)
 
-**Atualização**: `mpv` e `yt-dlp` foram instalados nesta sandbox e o
-pipeline foi testado de ponta a ponta contra os vídeos reais de
-`config/campaigns.conf`. Resultado: majoritariamente funciona, com uma
-correção real aplicada e uma limitação genuína de ambiente (não do
-nosso código) que ficou sem confirmação visual.
+Histórico resumido (a investigação passou por vários diagnósticos
+errados antes de chegar na causa raiz de verdade — registrado abaixo
+pra quem for mexer nisso de novo não repetir os mesmos becos sem
+saída):
 
-**Descoberta 1 — yt-dlp do `apt` estava desatualizado demais pra
-funcionar**: a versão do Debian (2023.03.04) não conseguia extrair
-NENHUM formato de vídeo/áudio de um vídeo real do YouTube (só
-storyboards/thumbnails) — o YouTube muda a extração com frequência e
-yt-dlp precisa ser atualizado seguido. `yt-dlp -U` recusou atualizar
-("installed via apt, use apt to update"). Contornado nesta sandbox
-instalando uma versão atual via `pip3 install --user --upgrade
---break-system-packages yt-dlp` (vai pra `~/.local/bin`, que já vem
-antes de `/usr/bin` no PATH — não mexe no pacote do apt). **Isso é uma
-dependência operacional real do projeto**: o dispositivo em produção
-vai precisar de um jeito de manter o `yt-dlp` atualizado (ex.: cron
-rodando `yt-dlp -U` se instalado via pip/binário standalone, já que via
-apt normalmente trava numa versão antiga do repositório Debian).
+**yt-dlp do `apt` desatualizado**: a versão do Debian (2023.03.04) não
+extraía nenhum formato de vídeo real do YouTube (só storyboards). Sem
+`yt-dlp -U` (recusa por ser gerenciado via apt). Resolvido instalando
+versão atual via `pip3 install --user --upgrade --break-system-packages
+yt-dlp` (`~/.local/bin`, na frente de `/usr/bin` no PATH). **Dependência
+operacional real do projeto**: o dispositivo em produção precisa de um
+jeito de manter `yt-dlp` atualizado (apt trava em versões antigas que
+páram de funcionar contra o YouTube).
 
-**Descoberta 2 — bug real no seletor de formato, corrigido**: com
-`yt-dlp` atualizado, `mpv --ytdl-format="bestvideo[height<=720]+..."`
-(o seletor antigo) resolvia pra **AV1**, não H.264. Confirmado rodando
-`mpv` direto contra uma URL real. O RK3229 é um chip de 2016; sua VPU
-Rockchip quase certamente não tem decode de AV1 por hardware (isso só
-apareceu em SoCs Rockchip bem mais recentes) — decodificar AV1 em
-software nesse CPU fraco (quad-core Cortex-A7) provavelmente não
-aguentaria um kiosk contínuo. Corrigido em
-`include/video_config.h::kYtdlFormatSelector`: adicionado
-`[vcodec^=avc1]` pra forçar H.264, que eu confirmei existir em toda
-resolução testada pra esse vídeo. Testado de novo com o seletor
-corrigido: `mpv` passou a escolher `h264 360x640` corretamente.
+**Seletor de formato caindo em AV1**: sem `[vcodec^=avc1]` no
+`--ytdl-format`, o `mpv` escolhia AV1 (RK3229 não tem decode de AV1 por
+hardware). Corrigido em `include/video_config.h::kYtdlFormatSelector`.
 
-**Descoberta 3 — o pipeline completo do app funciona, exceto a
-composição visual final, que não pôde ser confirmada nesta sandbox**:
-rodei o binário de verdade (`./build/bin/tvbox_esus_app`) com o
-`config/campaigns.conf` real. Confirmado via `ps`/`xwininfo`:
-  - o app spawna `mpv` com todos os argumentos corretos (`--wid=<id>`,
-    `--ytdl-format` já corrigido, URL certa da campanha ativa);
-  - a janela X11 filha existe, está no tamanho/posição certos
-    (`341x645+0+61`, batendo com a área do banner), está mapeada
-    (`Map State: IsViewable`) e o `mpv` está de fato consumindo CPU de
-    forma consistente com decode ativo.
-  Porém **a imagem do vídeo não apareceu nos screenshots**.
+**`yt-dlp -g` chamado por nós mesmos quebrava com streams separados**:
+histórico mais antigo, já corrigido — `ResolveStreamUrl` não chama mais
+`yt-dlp -g`; repassa a URL original pro `mpv`, que resolve sozinho via
+`ytdl_hook`.
 
-  **Atualização 2026-09-27 — investiguei mais a fundo e agora tenho uma
-  causa raiz bem mais sólida** (não é só hipótese):
-  - Sem `--wid`, `mpv` escolhe sozinho `vo=gpu` com um **contexto
-    Wayland nativo** (log: `[vo/gpu/opengl] Initializing GPU context
-    'wayland'`) — cria sua própria superfície Wayland, sem passar por
-    X11 nenhum. `--wid` é um conceito puramente X11 (Wayland não tem
-    "embutir por ID de janela alheia" — isso é uma diferença de design
-    deliberada, por segurança). Então, ao passar `--wid` (obrigatório
-    pra embutir na nossa janela), o `mpv` é forçado pro caminho X11.
-  - Testei **duas variantes do caminho X11**: o padrão (`vo=gpu` com
-    contexto X11/EGL) e forçando `--vo=xv` (X-Video, a técnica clássica
-    e historicamente mais robusta pra esse tipo de embedding). Nos
-    dois casos, `mpv` decodifica de verdade (confirmado nos logs: "Using
-    hardware decoding (vaapi-copy)", progresso de tempo avançando,
-    cache/buffer normal) — mas a janela continua preta em QUALQUER
-    método de captura, incluindo `xwd` (protocolo X11 puro, não passa
-    por nenhum portal/ferramenta de screenshot do Wayland).
-  - **A evidência decisiva**: a janela PRINCIPAL do Raylib (que também
-    usa OpenGL/EGL) apareceu correta em literalmente todo screenshot
-    tirado durante esta sessão inteira (dezenas de vezes). Só a
-    **segunda janela top-level `override-redirect`** (a técnica de
-    embedding em `player.cpp`) fica preta. Isso isola o problema: não é
-    "GPU não composita neste container" (a janela do Raylib prova que
-    composita bem) — é especificamente como o **mutter** (compositor
-    Wayland do GNOME, via XWayland) lida com uma segunda janela X11
-    top-level `override-redirect` de um cliente Xlib cru, sem toolkit.
-  - **Isso não é um bug no nosso código** — a lógica de spawn, os
-    argumentos do mpv, e a criação/posicionamento/mapeamento da janela
-    X11 estão todos corretos (confirmado via `ps`/`xwininfo`). É uma
-    limitação genuína e específica desta sandbox (GNOME+Wayland+
-    XWayland), que o dispositivo alvo **não tem** (Armbian roda Xorg
-    puro, sem Wayland, sem XWayland, provavelmente sem compositor
-    nenhum — nesse cenário, duas janelas top-level com stacking
-    controlado por `XMapRaised` é a técnica padrão de décadas de
-    kiosks Linux, e funciona de forma direta e previsível).
-  - **Próximo passo real**: validar a composição visual num Xorg puro
-    de verdade (o dispositivo Armbian real, ou uma VM/máquina com Xorg
-    sem Wayland) antes de considerar este item fechado — mas a
-    confiança de que vai funcionar lá é alta, dado que toda a lógica
-    downstream do `--wid` já foi validada.
-  - **Confirmação do usuário (2026-09-27), que fecha a dúvida**: o
-    usuário rodou o binário direto (fora das minhas capturas) e viu o
-    vídeo aparecer de verdade — só que **numa janela/aba separada,
-    flutuando por conta própria, não encaixado dentro da janela do
-    app**. Isso bate 100% com a hipótese acima e explica por que meus
-    `xwd`/`import` mostravam preto: o **mutter** (compositor do
-    GNOME/Wayland, hospedando o cliente via XWayland) não está
-    respeitando o `override_redirect=True` da nossa janela — em vez de
-    tratá-la como uma superposição sem gerência (o que X11 puro faria),
-    ele a exibe como uma janela própria, independente, na posição que
-    ELE decide, ignorando as coordenadas que pedimos via
-    `XMoveResizeWindow`. Isso é uma particularidade conhecida de
-    mutter/XWayland com clientes X11 crus (sem toolkit) que criam
-    janelas `override-redirect` — não existe em Xorg sem compositor
-    (o caso do dispositivo real), onde `override-redirect` sempre
-    significa exatamente "não gerencie, deixe onde eu pedi".
+**A causa raiz de verdade do vídeo não aparecer no lugar certo — bug
+real, corrigido, ao contrário do que eu tinha diagnosticado antes**:
 
-  - **Descoberta 4 (2026-09-27) — bug real de corrida, corrigido**: ao
-    tentar reproduzir a demonstração pro usuário, o `mpv` morreu rápido
-    (virou zumbi em poucos segundos) numa partida limpa do app, quando
-    o primeiro slide já é vídeo. Causa: `VideoPlayer::Init()` criava a
-    janela X11 com `XCreateWindow` + `XFlush`, e `Play()` (chamado logo
-    em seguida, às vezes no mesmo frame) mapeava com `XMapRaised` +
-    `XFlush` antes de dar fork/exec no `mpv`. `XFlush` só garante que o
-    pedido foi **enviado** ao servidor X, não que ele já foi
-    **processado**. O `mpv`, rodando como processo separado com sua
-    própria conexão X11, podia tentar anexar (`--wid`) numa janela que
-    o servidor ainda não tinha terminado de criar/mapear — corrida
-    genuína, mais provável exatamente no primeiro slide (menos tempo
-    decorrido entre `Init()` e `Play()`). Corrigido trocando `XFlush`
-    por `XSync(display_, False)` nos dois pontos (`Init()` e `Play()`,
-    em `src/player.cpp`), forçando um round-trip que garante que o
-    servidor já aplicou o pedido antes de devolver o controle. Testado
-    de verdade: 3 partidas limpas seguidas depois da correção, `mpv`
-    iniciou e permaneceu decodificando nas 3 (antes, a mesma sequência
-    tinha falhado na primeira tentativa).
-  - **Dica de troubleshooting pro Xorg real, se a imagem não aparecer**:
-    testei duas variantes do VO nesta sessão e as duas decodificam com
-    sucesso (só não consegui confirmar visualmente, pelo motivo acima):
-    o padrão do `mpv` sem `--vo` explícito (deixa o `mpv` escolher —
-    é o que `player.cpp` faz hoje) e `--vo=xv` forçado (técnica mais
-    antiga/clássica pra embedding em janela alheia, historicamente mais
-    previsível entre drivers diferentes). **Não troquei o padrão no
-    código** porque não tenho evidência de qual é melhor no hardware
-    real (o teste aqui não diferenciou os dois — a sandbox quebrada
-    faz os dois falharem do mesmo jeito visualmente) — só documento
-    como opção de diagnóstico: se o vídeo não aparecer no Armbian real,
-    tentar `--vo=xv` explícito é um teste rápido e de baixo risco.
+O usuário reportou (2026-09-27) que o vídeo aparecia "numa aba
+separada, flutuando", não dentro da área reservada. Minha primeira
+hipótese (registrada numa versão anterior deste documento) era que o
+compositor **mutter** (GNOME/Wayland) não respeitava
+`override_redirect=True` numa segunda janela X11 top-level. **Essa
+hipótese estava incompleta.** Investigando mais a fundo:
 
-**Histórico (sessão anterior, mesmo dia)**: antes de ter `mpv`/`yt-dlp`
-instalados, eu já tinha encontrado e corrigido um bug relacionado
-testando só o `yt-dlp` isolado num venv: `yt-dlp -g` sozinho, quando o
-vídeo não tem stream progressiva (comum), imprime DUAS URLs em linhas
-separadas (vídeo e áudio) — o código antigo passava isso como se fosse
-uma URL só pro `mpv`. Corrigido faz tempo: `ResolveStreamUrl` não chama
-mais `yt-dlp -g`, só repassa a URL original pro `mpv`, que resolve
-sozinho via `ytdl_hook` (`--ytdl=yes
---script-opts=ytdl_hook-ytdl_path=yt-dlp`, já que o hook por padrão
-procura `youtube-dl`, que normalmente não existe no Armbian). Essa
-correção foi validada de verdade agora (descobertas 1-3 acima).
+1. **Causa raiz real**: o `mpv`, toda vez que existe um compositor
+   Wayland alcançável (`WAYLAND_DISPLAY` setado, como acontece sob
+   XWayland), **cria sua própria superfície Wayland nativa e ignora
+   `--wid` por completo** — mesmo passando uma janela X11 válida,
+   mesmo sendo uma janela FILHA de verdade (testei as duas formas:
+   segunda janela top-level `override-redirect`, e depois — já como
+   parte da correção — uma janela filha de verdade; `mpv` ignorava
+   `--wid` nas duas, sempre preferindo Wayland nativo quando disponível
+   e nenhum contexto de GPU foi forçado explicitamente).
+2. Corrigido com **duas mudanças complementares**:
+   - **Janela filha de verdade** (não mais uma segunda janela
+     top-level `override-redirect` posicionada manualmente): a janela
+     de vídeo agora é criada como filha real da janela do Raylib, via
+     `XCreateWindow` usando o ID de janela X11 nativo do Raylib como
+     pai (obtido via `glfwGetX11Window`, isolado em
+     `src/native_window.cpp`/`include/native_window.h` pelo mesmo
+     motivo de `video_config.h` — colisão de `Font` entre raylib.h e
+     Xlib.h). Posição/tamanho agora são relativos ao pai, não
+     coordenadas absolutas de tela — `include/player.h`/`src/player.cpp`
+     mudaram de assinatura (`Init`/`SetGeometry` recebem
+     `parentWindowId` e x/y relativos). Isso garante que a janela
+     nunca vira uma superfície independente do compositor.
+   - **Forçar `--gpu-context=x11egl`** no `mpv` (`src/player.cpp`): sem
+     isso, mesmo com a janela filha, o `mpv` ainda preferia Wayland
+     nativo e ignorava `--wid`. Forçar o contexto X11/EGL garante que
+     ele sempre respeite `--wid`, independente de haver ou não um
+     compositor Wayland por perto. Bônus: decode por hardware sem cópia
+     extra (`vaapi` zero-copy em vez de `vaapi-copy`).
+3. **Verificado de verdade, com screenshot mostrando o vídeo real
+   dentro da área reservada** (não só "decodifica", como nas tentativas
+   anteriores): rodei o app do zero múltiplas vezes; o vídeo aparece
+   corretamente posicionado entre o header e o footer, dentro da
+   janela do kiosk, com o frame mudando ao longo do tempo (prova de
+   playback contínuo, não uma imagem estática).
+4. Nota lateral: durante essa investigação também confirmei que `Xv`
+   (`--vo=xv`) usa um overlay de hardware historicamente invisível pra
+   `XGetImage`/`xwd`/`import` — por isso testes anteriores com `vo=xv`
+   pareciam "não renderizar" mesmo decodificando; isso é uma limitação
+   de ferramentas de screenshot, não do `mpv` nem do nosso código, e
+   não tem relação com o bug real (que era o `--gpu-context` sendo
+   ignorado, afetando igualmente todos os VOs baseados em `vo=gpu`).
+
+**Bug de corrida corrigido também nesta janela de investigação**: o
+`mpv` podia morrer rápido (virar zumbi em segundos) numa partida limpa
+quando o primeiro slide já é vídeo — `VideoPlayer::Init()`/`Play()`
+usavam `XFlush` (só envia o pedido) em vez de `XSync` (espera o
+servidor processar) antes do `mpv` (processo separado, conexão X11
+própria) tentar anexar na janela. Corrigido trocando por
+`XSync(display_, False)` nos dois pontos. Testado: 3 partidas limpas
+seguidas sem falha, contra 1 falha na primeira tentativa antes da
+correção.
+
+**O que ainda não foi validado**: o comportamento no Armbian real (Xorg
+puro, sem Wayland) — lá, `WAYLAND_DISPLAY` nunca estaria setado, então
+o `mpv` provavelmente escolheria o contexto X11 automaticamente mesmo
+sem forçar `--gpu-context=x11egl`; mas como agora forçamos
+explicitamente, o comportamento fica determinístico independente disso,
+o que é mais robusto. Decodificação por hardware real via `rkmpp`
+(driver Rockchip) continua não testada (só temos VAAPI/AMD nesta
+sandbox) — validar `--hwdec=auto` de fato escolhe `rkmpp` no
+dispositivo real, ou ajustar pra `--hwdec=rkmpp` explícito se
+necessário.
 
 ## 6. `configuracoes_tv` (cores/textos de header/footer) não é lido dinamicamente
 O header/footer no app original são configuráveis via banco (cores,

@@ -15,6 +15,7 @@
 #include "campaign.h"
 #include "campaign_store.h"
 #include "config.h"
+#include "native_window.h"
 #include "player.h"
 #include "procexec.h"
 #include "scraper.h"
@@ -107,9 +108,16 @@ int main() {
         g_campaigns = std::move(fixed);
     }
 
+    unsigned long nativeWindowId = GetNativeX11WindowId(GetWindowHandle());
+    if (nativeWindowId == 0) {
+        TraceLog(LOG_WARNING,
+                  "VideoPlayer: nao foi possivel obter o ID X11 nativo da janela (GLFW nao esta em modo X11?); "
+                  "slides de video serao ignorados.");
+    }
+
     VideoPlayer player;
-    bool playerReady = player.Init(0, 0, windowW, windowH);
-    if (!playerReady) {
+    bool playerReady = nativeWindowId != 0 && player.Init(nativeWindowId, 0, 0, windowW, windowH);
+    if (nativeWindowId != 0 && !playerReady) {
         TraceLog(LOG_WARNING, "VideoPlayer: nao foi possivel abrir o display X11; slides de video serao ignorados.");
     }
 
@@ -170,9 +178,10 @@ int main() {
                                  screenH - headerHeight - footerHeight};
 
         if (playerReady) {
-            Vector2 winPos = GetWindowPosition();
-            player.SetGeometry(static_cast<int>(winPos.x + bannerRect.x),
-                                static_cast<int>(winPos.y + bannerRect.y),
+            // Coordenadas relativas à janela do Raylib (janela de vídeo
+            // é filha dela, não uma segunda top-level) — sem precisar
+            // somar a posição da janela na tela.
+            player.SetGeometry(static_cast<int>(bannerRect.x), static_cast<int>(bannerRect.y),
                                 static_cast<int>(bannerRect.width),
                                 static_cast<int>(bannerRect.height));
         }

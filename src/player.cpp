@@ -23,20 +23,23 @@ VideoPlayer::~VideoPlayer() {
     }
 }
 
-bool VideoPlayer::Init(int screenX, int screenY, int width, int height) {
+bool VideoPlayer::Init(unsigned long parentWindowId, int x, int y, int width, int height) {
+    if (parentWindowId == 0) return false;
+
     display_ = XOpenDisplay(nullptr);
     if (!display_) return false;
 
     int screen = DefaultScreen(display_);
-    Window root = RootWindow(display_, screen);
+    Window parent = static_cast<Window>(parentWindowId);
 
     XSetWindowAttributes attrs{};
     attrs.background_pixel = BlackPixel(display_, screen);
-    attrs.override_redirect = True; // sem gerenciador de janelas no kiosk
-
-    videoWindow_ = XCreateWindow(display_, root, screenX, screenY, width, height, 0,
-                                  CopyFromParent, InputOutput, CopyFromParent,
-                                  CWBackPixel | CWOverrideRedirect, &attrs);
+    // Sem override_redirect: esta janela é FILHA de verdade da janela do
+    // Raylib (não uma segunda top-level). Isso é o que faz a posição
+    // ser sempre relativa ao pai e evita o problema de mutter tratando
+    // uma segunda janela top-level como independente — ver player.h.
+    videoWindow_ = XCreateWindow(display_, parent, x, y, width, height, 0, CopyFromParent,
+                                  InputOutput, CopyFromParent, CWBackPixel, &attrs);
     // XSync (não XFlush): precisamos que o servidor X já tenha
     // processado o CreateWindow antes de devolver o controle — Play()
     // pode rodar logo em seguida (ex.: primeiro slide já é vídeo) e
@@ -52,9 +55,9 @@ bool VideoPlayer::Init(int screenX, int screenY, int width, int height) {
     return true;
 }
 
-void VideoPlayer::SetGeometry(int screenX, int screenY, int width, int height) {
+void VideoPlayer::SetGeometry(int x, int y, int width, int height) {
     if (!display_ || !videoWindow_) return;
-    XMoveResizeWindow(display_, videoWindow_, screenX, screenY, width, height);
+    XMoveResizeWindow(display_, videoWindow_, x, y, width, height);
     XFlush(display_);
 }
 
@@ -105,9 +108,24 @@ bool VideoPlayer::Play(const Campaign &campaign) {
         // Armbian normalmente só existe "yt-dlp" no PATH, então apontamos
         // explicitamente (opção documentada do próprio ytdl_hook.lua).
         const char *ytdlPathOpt = "--script-opts=ytdl_hook-ytdl_path=yt-dlp";
-        execlp("mpv", "mpv", wid.c_str(), "--loop-file=inf", "--mute=yes", "--no-osc",
-               "--no-input-default-bindings", "--really-quiet", "--hwdec=auto", "--ytdl=yes",
-               ytdlPathOpt, ytdlFormat.c_str(), streamUrl.c_str(),
+        // --gpu-context=x11egl: sem isso, o mpv sempre que encontra um
+        // compositor Wayland alcançável (ex.: XWayland) cria sua PRÓPRIA
+        // superfície Wayland nativa, ignorando --wid por completo —
+        // mesmo com --wid apontando pra uma janela X11 válida e mesmo
+        // sendo uma janela filha de verdade da nossa (testado e
+        // confirmado ao vivo em 2026-09-27: sem isso o vídeo aparecia
+        // numa janela/aba própria, flutuando, em vez de dentro da área
+        // reservada — ver docs/memory/known-issues.md item 5). Forçar o
+        // contexto X11/EGL garante que o mpv sempre respeite --wid,
+        // independente de haver ou não um compositor Wayland por perto
+        // (no dispositivo alvo, Xorg puro sem Wayland, isso nem seria um
+        // problema — mas forçar explicitamente é mais robusto do que
+        // depender de auto-detecção). Bônus: decode por hardware sem
+        // cópia extra (`vaapi` em vez de `vaapi-copy`) nesta sandbox.
+        const char *gpuContextOpt = "--gpu-context=x11egl";
+        execlp("mpv", "mpv", wid.c_str(), gpuContextOpt, "--loop-file=inf", "--mute=yes",
+               "--no-osc", "--no-input-default-bindings", "--really-quiet", "--hwdec=auto",
+               "--ytdl=yes", ytdlPathOpt, ytdlFormat.c_str(), streamUrl.c_str(),
                static_cast<char *>(nullptr));
         _exit(127);
     }

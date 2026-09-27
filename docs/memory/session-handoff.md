@@ -1,5 +1,67 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 10) — vídeo fora do lugar, resolvido de vez
+
+### Pedido do usuário
+"O vídeo não está se posicionando no campo reservado na janela.
+Corrija, use algum gatilho ou proponha soluções."
+
+### Diagnóstico anterior estava incompleto — corrigido nesta sessão
+Na parte 8, eu tinha diagnosticado (com base em screenshots pretos)
+que o mutter não respeitava `override_redirect` numa segunda janela
+top-level. Isso levou a uma solução arquitetural correta mas
+incompleta: transformar a janela de vídeo numa **janela filha de
+verdade** da janela do Raylib (via `glfwGetX11Window` +
+`XCreateWindow` com essa janela como pai, em vez de uma segunda
+top-level `override-redirect` posicionada manualmente). Implementei
+isso (`include/native_window.h`/`src/native_window.cpp` novos;
+`include/player.h`/`src/player.cpp` com assinatura nova recebendo
+`parentWindowId`; `apps/tvbox_esus_app.cpp` obtendo o handle nativo via
+`GetWindowHandle()` do raylib).
+
+**Mas isso sozinho não resolveu** — testando depois da mudança, o
+vídeo continuou não aparecendo. Investigando com `mpv` manual e log
+verboso, achei a causa raiz de verdade: **o `mpv`, toda vez que existe
+um compositor Wayland alcançável, cria sua própria superfície Wayland
+nativa e ignora `--wid` completamente** — independente de ser janela
+filha ou top-level, independente do formato do ID (testei hex e
+decimal). Só forçando **`--gpu-context=x11egl`** explicitamente é que
+o `mpv` respeita `--wid` de verdade.
+
+### O que fiz
+1. Implementei a janela filha de verdade (arquitetura correta,
+   necessária mesmo que não suficiente sozinha).
+2. Adicionei `--gpu-context=x11egl` no spawn do `mpv`
+   (`src/player.cpp`) — a peça que realmente resolveu.
+3. Descobri de passagem que `--vo=xv` usa overlay de hardware
+   historicamente invisível pra ferramentas de screenshot
+   (`xwd`/`import`) — por isso testes anteriores "não mostravam nada"
+   mesmo decodificando. Isso não tinha relação com o bug real.
+
+### Verificado de verdade — com screenshot mostrando o vídeo certo
+Rodei o app do zero (não um teste manual de mpv isolado): o vídeo
+aparece **de verdade, dentro da área reservada, dentro da janela do
+app** — pessoa falando, legendas em vídeo, tudo entre o header e o
+footer. Capturei dois frames com alguns segundos de diferença e o
+conteúdo mudou (prova de playback contínuo, não uma imagem estática).
+
+### Por que a sessão anterior (parte 8) não achou isso
+Eu tinha testado `--vo=xv` explícito, mas nunca `--gpu-context=x11egl`
+— e o `--vo=xv` que testei tem o problema paralelo de usar overlay
+(invisível pra screenshot), então mesmo que tivesse corrigido o `--wid`
+sendo ignorado, eu não teria conseguido CONFIRMAR visualmente daquela
+vez. As duas descobertas desta sessão (gpu-context é o que importa;
+xv usa overlay invisível pra screenshot) se encaixam e explicam
+completamente por que a investigação anterior ficou incompleta.
+
+### Estado atual
+Known-issues.md item 5 reescrito do zero e marcado RESOLVIDO. Ainda
+não testado no Armbian real (só temos VAAPI/AMD nesta sandbox, não
+`rkmpp`) — mas a lógica agora é determinística (não depende de
+auto-detecção do mpv), o que é uma base bem mais sólida pra validar lá.
+
+---
+
 ## Sessão de 2026-09-27 (parte 9) — "roda pra eu ver" → bug de corrida real, corrigido
 
 ### O que aconteceu

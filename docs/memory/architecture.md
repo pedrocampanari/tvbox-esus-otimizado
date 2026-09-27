@@ -15,11 +15,14 @@ tvbox_esus_app (Raylib, C++)
  ├─ thread de scraping: poll HTTP a cada N segundos (default 30s, mesmo
  │  intervalo do fallback do app original) — não mantém conexão persistente
  └─ quando o slide ativo é vídeo:
-     └─ spawna um processo `mpv --wid=<janela X11 filha> --ytdl=yes ...`
-        posicionado exatamente sobre a área do banner, passando a URL da
-        campanha como está; o próprio mpv resolve internamente (via seu
-        hook `ytdl_hook` + `yt-dlp`) quando não é um arquivo direto, e
-        decodifica/desenha nessa janela X11 (fora do pipeline Raylib/OpenGL)
+     └─ spawna um processo `mpv --wid=<janela X11 filha> --gpu-context=x11egl
+        --ytdl=yes ...` posicionado exatamente sobre a área do banner,
+        passando a URL da campanha como está; o próprio mpv resolve
+        internamente (via seu hook `ytdl_hook` + `yt-dlp`) quando não é
+        um arquivo direto, e decodifica/desenha nessa janela X11 (fora
+        do pipeline Raylib/OpenGL, mas dentro da MESMA hierarquia de
+        janela X11 — a janela do vídeo é filha de verdade da janela do
+        Raylib, não uma segunda top-level, ver módulo player abaixo)
 ```
 
 Raylib nunca desenha o vídeo em si — ele só existe pra decidir "agora é
@@ -76,16 +79,30 @@ problema real no hardware (ver [[known-issues]]).
   `curl` vê) só contém o placeholder "Aguardando informações". Um
   scraper puramente HTTP não vai encontrar vídeos reais até essa lacuna
   ser resolvida (ver known-issues para as opções cogitadas).
+- `include/native_window.h` / `src/native_window.cpp` — extrai o ID de
+  janela X11 nativo da janela do Raylib, via `glfwGetX11Window` (GLFW é
+  vendorizado dentro do raylib — ver [[architecture]] > Build). Isolado
+  num módulo próprio pelo mesmo motivo do `video_config.h`:
+  `glfw3native.h` (com `GLFW_EXPOSE_NATIVE_X11`) inclui `<X11/Xlib.h>`
+  internamente, que colide com `raylib.h` na mesma translation unit —
+  ver "Restrição de headers" abaixo.
 - `include/player.h` / `src/player.cpp` — dado um `Campaign` de vídeo:
-  1. Cria/reaproveita uma janela X11 filha (Xlib puro, sem depender de
-     internals do GLFW/Raylib — por isso `player.cpp` não pode incluir
-     `raylib.h`/`include/config.h`; ver `include/video_config.h`)
-     posicionada sobre a área do banner.
-  2. Lança `mpv --wid=<id> --loop-file=inf --mute=yes --ytdl=yes
-     --ytdl-format=<kYtdlFormatSelector> ...` passando a URL da campanha
-     **como está** (arquivo direto para `upload`/`direto`; URL original
-     do post/vídeo para `youtube`/`instagram`/`facebook`). Nunca
-     embutimos o player oficial da plataforma (nunca iframe).
+  1. Cria a janela de vídeo como **filha de verdade** da janela do
+     Raylib (`XCreateWindow` usando o ID de `native_window.h` como pai
+     — não uma segunda janela top-level `override-redirect`
+     posicionada manualmente, que era a v1). Posição/tamanho relativos
+     ao pai, não coordenadas absolutas de tela.
+  2. Lança `mpv --wid=<id> --gpu-context=x11egl --loop-file=inf
+     --mute=yes --ytdl=yes --ytdl-format=<kYtdlFormatSelector> ...`
+     passando a URL da campanha **como está** (arquivo direto para
+     `upload`/`direto`; URL original do post/vídeo para
+     `youtube`/`instagram`/`facebook`). Nunca embutimos o player
+     oficial da plataforma (nunca iframe). `--gpu-context=x11egl` é
+     obrigatório: sem forçar, o `mpv` cria sua própria superfície
+     Wayland nativa sempre que existe um compositor Wayland alcançável
+     e ignora `--wid` completamente, independente de a janela ser
+     filha ou top-level — descoberto testando de verdade, ver
+     [[known-issues]] item 5.
   3. Para `youtube`/`instagram`/`facebook`, quem resolve a URL de stream
      é o próprio `mpv`, via seu hook interno `ytdl_hook` (que chama
      `yt-dlp`) — **não chamamos `yt-dlp -g` nós mesmos**. Decisão tomada
@@ -95,6 +112,11 @@ problema real no hardware (ver [[known-issues]]).
      mux/ffmpeg. Ver [[known-issues]] item 5.
   4. Ao trocar de slide, desmapeia (hide) a janela do mpv e mata o
      processo; ao voltar pra um slide de vídeo, recria.
+  5. `Init()`/`Play()` usam `XSync` (não `XFlush`) depois de criar/mapear
+     a janela — sem isso existe uma corrida real onde o `mpv` (processo
+     separado, conexão X11 própria) tenta anexar numa janela que o
+     servidor X ainda não terminou de criar/mapear (mais provável
+     quando o primeiro slide já é vídeo). Ver [[known-issues]] item 5.
 - `include/ui.h` / `src/ui.cpp` — desenho Raylib do chrome (header/footer,
   cada um com título+subtítulo, cores diferentes entre si — header azul,
   footer vermelho) e dos slides de texto/imagem, usando exatamente a
@@ -102,18 +124,24 @@ problema real no hardware (ver [[known-issues]]).
   Sans carregada de `assets/fonts/` (ver [[known-issues]] item 3), não a
   fonte bitmap padrão do Raylib.
 
-## Restrição de headers: `player.cpp`/`player.h` nunca podem incluir `raylib.h`
+## Restrição de headers: `player.cpp`/`player.h`/`native_window.cpp` nunca podem incluir `raylib.h`
 Descoberto testando de verdade em 2026-09-26 (não é teórico): `<X11/
 Xlib.h>` faz `typedef XID Font;` (um inteiro); `raylib.h` faz `typedef
 struct Font {...} Font;` (uma struct). Incluir os dois na mesma
 translation unit é erro de compilação (`using typedef-name 'Font' after
-'struct'`), não um simples aviso. Por isso `include/player.h` só usa
-forward declarations de `Display`/`Window` (nunca inclui `Xlib.h` no
-header) e `src/player.cpp` nunca inclui `include/config.h` nem
-`raylib.h` — qualquer constante que `player.cpp` precisar vai em
-`include/video_config.h` (sem dependência de raylib), nunca em
-`config.h`. Se precisar adicionar uma constante nova pro player, o
-lugar certo é `video_config.h`.
+'struct'`), não um simples aviso. `glfw3native.h` (com
+`GLFW_EXPOSE_NATIVE_X11`) também inclui `Xlib.h` internamente — mesmo
+problema, mesma regra. Por isso `include/player.h` só usa forward
+declarations de `Display`/`Window` (nunca inclui `Xlib.h` no header),
+`src/player.cpp` nunca inclui `include/config.h` nem `raylib.h`, e
+`src/native_window.cpp` (que precisa de `glfw3native.h`) também nunca
+inclui `raylib.h` — qualquer constante que esses módulos precisarem vai
+em `include/video_config.h` (sem dependência de raylib), nunca em
+`config.h`. Quem CHAMA essas funções (`apps/tvbox_esus_app.cpp`) pode
+incluir `raylib.h` normalmente, já que ele não inclui `Xlib.h`
+diretamente nem `glfw3native.h` — só os dois lados isolados (que
+precisam de X11/GLFW nativo) não podem se misturar com o lado que
+precisa de `raylib.h`.
 
 ## Janela fixa 25% x 100%
 No `main()`, antes do primeiro frame: pega `GetMonitorWidth/Height` do
@@ -153,8 +181,10 @@ para não virar mágica espalhada pelo código.
   `yt-dlp` (+ `python3`), `curl` (só necessário se `kUseLiveScraping`
   voltar a `true`). Testado de verdade nesta sandbox depois de instalar
   `mpv`/`yt-dlp` (ver [[known-issues]] item 5 e [[session-handoff]]) —
-  o pipeline de resolução/spawn funciona; só a composição visual final
-  não pôde ser confirmada aqui (ambiente Wayland, não Xorg puro).
+  **o vídeo aparece corretamente posicionado dentro da janela do app**,
+  confirmado por screenshot com frames mudando ao longo do tempo (não
+  só "decodifica sem erro", de fato visível). Ainda não testado no
+  Armbian real (essa sandbox só tem VAAPI/AMD, não `rkmpp`).
   **Importante**: `yt-dlp` instalado via `apt` trava numa versão antiga
   do repositório Debian e simplesmente para de funcionar contra o
   YouTube (confirmado: a versão do apt não conseguia extrair nenhum

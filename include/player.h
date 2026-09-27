@@ -16,9 +16,11 @@ typedef unsigned long Window;
 
 namespace kiosk {
 
-// Reproduz vídeos fora do pipeline do Raylib: cria uma janela X11 filha
-// posicionada sobre a área do banner e delega a decodificação/desenho a
-// um processo `mpv` externo (`--wid=<janela>`), pra aproveitar decode por
+// Reproduz vídeos fora do pipeline do Raylib: cria uma janela X11
+// **filha de verdade** da janela principal do Raylib (via
+// XCreateWindow com o ID nativo do Raylib como pai — ver
+// include/native_window.h) e delega a decodificação/desenho a um
+// processo `mpv` externo (`--wid=<janela>`), pra aproveitar decode por
 // hardware e isolar crashes de decoder do processo principal. Nunca usa
 // iframe/webview — para vídeos de YouTube/Instagram/Facebook, a URL
 // original é passada direto pro mpv, que resolve via seu hook interno
@@ -27,6 +29,17 @@ namespace kiosk {
 // docs/memory/known-issues.md item 5 pro porquê dessa escolha (yt-dlp
 // sozinho, sem stream progressiva disponível, imprime vídeo e áudio em
 // URLs separadas — só o mpv sabe tocar isso sem precisar de mux).
+//
+// Por que janela FILHA e não uma segunda janela top-level
+// `override-redirect` posicionada manualmente (jeito antigo): sob
+// GNOME/mutter (Wayland + XWayland), uma segunda janela top-level de um
+// cliente Xlib cru não é tratada como "sobreposição sem gerência" —
+// mutter a exibe como uma janela própria e independente, ignorando a
+// posição pedida (confirmado ao vivo: o vídeo aparecia numa aba
+// separada, flutuando, em vez de encaixado). Uma janela FILHA (dentro
+// da árvore X11 da janela do Raylib) não tem esse problema: ela nunca
+// vira uma superfície Wayland própria — é sempre composta como parte da
+// janela pai, com posição sempre relativa a ele. Ver [[known-issues]].
 class VideoPlayer {
 public:
     VideoPlayer();
@@ -35,13 +48,15 @@ public:
     VideoPlayer(const VideoPlayer &) = delete;
     VideoPlayer &operator=(const VideoPlayer &) = delete;
 
-    // Deve ser chamado uma vez, com o identificador da janela nativa X11
-    // do Raylib (obtido via Xlib diretamente sobre o root window na
-    // posição/tamanho da janela kiosk — ver apps/tvbox_esus_app.cpp).
-    bool Init(int screenX, int screenY, int width, int height);
+    // `parentWindowId` é o ID de janela X11 nativa da janela do Raylib
+    // (ver include/native_window.h::GetNativeX11WindowId). `x`/`y` são
+    // relativos ao canto superior esquerdo dessa janela pai (não
+    // coordenadas absolutas de tela).
+    bool Init(unsigned long parentWindowId, int x, int y, int width, int height);
 
-    // Ajusta posição/tamanho (ex.: se a área do banner mudar).
-    void SetGeometry(int screenX, int screenY, int width, int height);
+    // Ajusta posição/tamanho (ex.: se a área do banner mudar). x/y
+    // continuam relativos à janela pai.
+    void SetGeometry(int x, int y, int width, int height);
 
     // Começa a tocar a campanha de vídeo informada. Mata qualquer
     // reprodução anterior antes de iniciar a nova.
