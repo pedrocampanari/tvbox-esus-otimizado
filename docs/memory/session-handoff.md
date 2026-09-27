@@ -1,5 +1,54 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 16) — Chromium ainda não abria no dispositivo real: falta `--no-sandbox` e `xrandr`
+
+### Contexto
+Usuário puxou o fix da parte 15 (`--ozone-platform=x11`) e testou no
+RK3229 real de novo: "Chromium nao abriu, video nao carregou, nao fez
+nada" — depois detalhou: "video so apareceu rodape e os loadings
+depois parava" (chromium nunca abriu; vídeo mostrou spinner e parou).
+
+### Diagnóstico (via logs reais colados pelo usuário)
+- `panel.log`: `[ERROR] ... Running as root without --no-sandbox is
+  not supported` em loop infinito — o Armbian do dispositivo loga
+  direto como `root` (prompt `root@rk322x-box`), sem usuário separado,
+  e o Chromium recusa iniciar como root sem `--no-sandbox`. Isso
+  explica por completo por que a janela nunca aparecia mesmo com o fix
+  da parte 15 já aplicado.
+- `xrandr --current` → `-bash: xrandr: command not found`. O pacote
+  que traz o binário (`x11-xserver-utils`) nunca tinha sido listado em
+  `install.sh` — só `xserver-xorg`/`xinit`. Sem `xrandr`, o cálculo de
+  75% sempre usa o fallback fixo 1920x1080 (não crasha, mas a
+  resolução pode estar errada na tela real).
+- `kiosk.log`: nenhuma linha de crash do app principal (`tvbox_esus_app`)
+  depois de 19:31:11 — mas um `ps aux` rodado depois (via SSH separado,
+  já que o usuário roda `startx` manualmente no console físico) não
+  encontrou nem `tvbox_esus_app` nem `mpv` rodando. Conclusão mais
+  provável: quando o app dá 5 quedas rápidas seguidas e desiste,
+  `exec.sh` sai com `exit 1`, o que termina a sessão X inteira
+  (`startx` retorna) — dá exatamente a sensação de "parou/travou" na
+  tela. Ainda não isolei uma causa de crash específica do vídeo nesta
+  sessão (pode já ter sido resolvido pelos fixes de OpenGL ES2.0/timeout
+  de partes anteriores — falta reteste correlacionado).
+
+### Fix aplicado
+- `exec.sh`: `--no-sandbox` adicionada à chamada do Chromium, com
+  comentário explicando a troca de segurança (aceitável aqui porque o
+  dispositivo já roda tudo como root sem isolamento nenhum).
+- `install.sh`: `x11-xserver-utils` adicionado à lista de pacotes de
+  runtime (traz `xrandr` e `xset`).
+
+### O que NÃO foi confirmado ainda
+Não testei estes dois fixes juntos no hardware real — só o
+`--ozone-platform=x11` (parte 15) foi confirmado isoladamente nesta
+sandbox, rodando como usuário comum (onde `--no-sandbox` não é
+necessário, então não reproduz esse bug específico aqui). Pedido pro
+usuário: `git pull` + reteste, com um `ps aux`/`tail -f kiosk.log`
+correlacionado no MOMENTO exato em que a tela "para", pra isolar de vez
+se ainda sobra algum crash do app de vídeo em si.
+
+---
+
 ## Sessão de 2026-09-27 (parte 15) — Chromium some sem `--ozone-platform=x11`; timeout de vídeo curto demais
 
 ### Contexto

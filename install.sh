@@ -44,6 +44,7 @@ log "Instalando dependências de runtime (X11, mpv, curl, python3, chromium)"
 $SUDO apt install -y \
   xserver-xorg \
   xinit \
+  x11-xserver-utils \
   mpv \
   curl \
   python3 \

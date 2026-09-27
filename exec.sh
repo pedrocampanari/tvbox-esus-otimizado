@@ -81,6 +81,17 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') kiosk iniciado" >> "$LOG_FILE"
 # nunca aparecendo como uma janela visível por fora dele. Confirmado
 # testando de verdade: sem essa flag, a janela nem aparece no
 # `xwininfo`; com ela, aparece corretamente com o título/classe certos.
+#
+# --no-sandbox: o kiosk real roda tudo como root (login direto como
+# root no Armbian, sem usuário separado) e o Chromium recusa iniciar
+# como root sem essa flag ("Running as root without --no-sandbox is
+# not supported" — confirmado no panel.log do dispositivo real, processo
+# morrendo e reiniciando em loop sem nunca abrir janela nenhuma). O
+# sandbox do Chromium normalmente isola o processo de renderização do
+# resto do sistema: como aqui TUDO já roda como root sem isolamento
+# nenhum (nem um usuário não-privilegiado dedicado ao kiosk), perder
+# essa camada extra não piora o modelo de ameaça real deste dispositivo
+# fechado de exibição institucional.
 if [ "$PANEL_ENABLED" = "1" ]; then
   CHROMIUM_BIN=""
   if command -v chromium >/dev/null 2>&1; then
@@ -119,6 +130,7 @@ if [ "$PANEL_ENABLED" = "1" ]; then
           --window-size="${PANEL_W},${SCREEN_H}" \
           --user-data-dir="$PANEL_PROFILE_DIR" \
           --ozone-platform=x11 \
+          --no-sandbox \
           --noerrdialogs \
           --disable-infobars \
           --disable-session-crashed-bubble \

@@ -67,12 +67,35 @@ chamadas" do SAÚDE e-SUS Atenção Primária, com código de 4 dígitos).
 à chamada do Chromium, junto com um comentário explicando o motivo
 (mesmo padrão do `--gpu-context=x11egl` do mpv, ver item 5).
 
+**Segundo bug, encontrado só no dispositivo REAL (não reproduz nesta
+sandbox, onde roda como usuário comum)**: mesmo com
+`--ozone-platform=x11`, o Chromium ainda não abria no RK3229 — o
+`panel.log` mostrava `[ERROR] Running as root without --no-sandbox is
+not supported` em loop infinito (o Armbian do dispositivo loga direto
+como `root`, sem usuário separado). **Fix**: adicionada `--no-sandbox`
+à chamada do Chromium em `exec.sh`. Isso desativa o sandbox de
+isolamento do processo de renderização — normalmente uma perda real de
+segurança, mas aqui o dispositivo inteiro já roda como root sem
+nenhuma outra camada de isolamento (não tem usuário dedicado nem outro
+tipo de sandboxing), então não piora o modelo de ameaça de um
+equipamento fechado que só existe pra mostrar um painel institucional.
+
+**Terceiro problema, também só no dispositivo real**: `xrandr` não
+estava instalado (`-bash: xrandr: command not found`), então a detecção
+de resolução em `exec.sh` sempre caía no fallback fixo (1920x1080,
+calculando 1440px de painel) mesmo a tela real sendo outra resolução.
+`xrandr` vem do pacote `x11-xserver-utils` (que também traz o `xset`
+usado pra desligar blank/DPMS/screensaver) — faltava em `install.sh`,
+adicionado agora.
+
 **O que ainda NÃO foi validado** (precisa do dispositivo real RK3229):
 o impacto de RAM de rodar Chromium + nosso app + `mpv` decodificando ao
 mesmo tempo no orçamento de 2GB (risco real — Chromium sozinho já
-costuma passar de 200-300MB) — ver item de RAM aberto na sessão. A
-lógica de detecção de resolução via `xrandr` já foi validada (bate:
-1366x768 real desta sandbox → 1024 calculado pra 75%).
+costuma passar de 200-300MB) — ver item de RAM aberto na sessão. Os
+três fixes acima (ozone-platform, no-sandbox, x11-xserver-utils) ainda
+não foram confirmados juntos no hardware real — só o `--ozone-platform=x11`
+foi confirmado isoladamente (nesta sandbox, com Chromium rodando como
+usuário comum, onde `--no-sandbox` não é necessário).
 
 ## -1. Animação de carregamento nos slides de vídeo — implementado em 2026-09-27
 Pedido do usuário: mostrar algo enquanto o vídeo ainda está
