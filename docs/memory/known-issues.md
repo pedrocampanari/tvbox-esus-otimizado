@@ -195,6 +195,42 @@ rodei o binário de verdade (`./build/bin/tvbox_esus_app`) com o
     sem Wayland) antes de considerar este item fechado — mas a
     confiança de que vai funcionar lá é alta, dado que toda a lógica
     downstream do `--wid` já foi validada.
+  - **Confirmação do usuário (2026-09-27), que fecha a dúvida**: o
+    usuário rodou o binário direto (fora das minhas capturas) e viu o
+    vídeo aparecer de verdade — só que **numa janela/aba separada,
+    flutuando por conta própria, não encaixado dentro da janela do
+    app**. Isso bate 100% com a hipótese acima e explica por que meus
+    `xwd`/`import` mostravam preto: o **mutter** (compositor do
+    GNOME/Wayland, hospedando o cliente via XWayland) não está
+    respeitando o `override_redirect=True` da nossa janela — em vez de
+    tratá-la como uma superposição sem gerência (o que X11 puro faria),
+    ele a exibe como uma janela própria, independente, na posição que
+    ELE decide, ignorando as coordenadas que pedimos via
+    `XMoveResizeWindow`. Isso é uma particularidade conhecida de
+    mutter/XWayland com clientes X11 crus (sem toolkit) que criam
+    janelas `override-redirect` — não existe em Xorg sem compositor
+    (o caso do dispositivo real), onde `override-redirect` sempre
+    significa exatamente "não gerencie, deixe onde eu pedi".
+
+  - **Descoberta 4 (2026-09-27) — bug real de corrida, corrigido**: ao
+    tentar reproduzir a demonstração pro usuário, o `mpv` morreu rápido
+    (virou zumbi em poucos segundos) numa partida limpa do app, quando
+    o primeiro slide já é vídeo. Causa: `VideoPlayer::Init()` criava a
+    janela X11 com `XCreateWindow` + `XFlush`, e `Play()` (chamado logo
+    em seguida, às vezes no mesmo frame) mapeava com `XMapRaised` +
+    `XFlush` antes de dar fork/exec no `mpv`. `XFlush` só garante que o
+    pedido foi **enviado** ao servidor X, não que ele já foi
+    **processado**. O `mpv`, rodando como processo separado com sua
+    própria conexão X11, podia tentar anexar (`--wid`) numa janela que
+    o servidor ainda não tinha terminado de criar/mapear — corrida
+    genuína, mais provável exatamente no primeiro slide (menos tempo
+    decorrido entre `Init()` e `Play()`). Corrigido trocando `XFlush`
+    por `XSync(display_, False)` nos dois pontos (`Init()` e `Play()`,
+    em `src/player.cpp`), forçando um round-trip que garante que o
+    servidor já aplicou o pedido antes de devolver o controle. Testado
+    de verdade: 3 partidas limpas seguidas depois da correção, `mpv`
+    iniciou e permaneceu decodificando nas 3 (antes, a mesma sequência
+    tinha falhado na primeira tentativa).
   - **Dica de troubleshooting pro Xorg real, se a imagem não aparecer**:
     testei duas variantes do VO nesta sessão e as duas decodificam com
     sucesso (só não consegui confirmar visualmente, pelo motivo acima):

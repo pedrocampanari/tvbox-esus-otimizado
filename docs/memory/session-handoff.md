@@ -1,5 +1,76 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 9) — "roda pra eu ver" → bug de corrida real, corrigido
+
+### O que aconteceu
+Rodei o app pro usuário ver. Reportou: "nao esta rodando, o video nao
+carrega". Investiguei e achei um zumbi do `mpv` (morreu em poucos
+segundos) — não era o mesmo problema de composição visual da parte 8,
+era o `mpv` genuinamente falhando ao iniciar.
+
+### Causa raiz (bug real, não ambiente)
+`VideoPlayer::Init()` cria a janela X11 e usa `XFlush` (só envia o
+pedido); `Play()`, chamado logo em seguida quando o primeiro slide já é
+vídeo, mapeia a janela e dá fork/exec no `mpv` — que abre sua PRÓPRIA
+conexão X11 e tenta anexar na janela por ID. `XFlush` não garante que o
+servidor já processou o `CreateWindow`/`MapRaised` antes do `mpv`
+tentar usar a janela — corrida genuína, mais provável no primeiro
+slide (menos tempo decorrido).
+
+### Correção
+Troquei `XFlush` por `XSync(display_, False)` nos dois pontos
+(`Init()` e `Play()`, `src/player.cpp`) — força round-trip, garante
+que o servidor já aplicou antes de devolver controle.
+
+### Verificado de verdade
+Rebuild limpo. Testei 3 partidas limpas seguidas do zero: `mpv`
+iniciou e continuou decodificando (CPU/memória crescendo, sem zumbi)
+nas 3 — antes da correção, a mesma sequência já tinha falhado na
+primeira tentativa.
+
+---
+
+## Sessão de 2026-09-27 (parte 8) — confirmação do usuário: "bug de sobreposição"
+
+### O que o usuário reportou
+Rodou o binário ele mesmo (fora das minhas capturas de tela) e viu:
+"esta rodando o video em uma aba e o fundo em outra, nao esta dentro
+da aba do programa" — o vídeo aparece, mas numa janela/aba separada
+flutuando por conta própria, não encaixado dentro da janela do kiosk.
+
+### Por que isso não é um bug novo — é a confirmação do que já suspeitava
+Bate exatamente com o diagnóstico da parte 7 (item 5 de
+[[known-issues]]): o vídeo decodifica e renderiza de verdade (por isso
+o usuário consegue ver), só que o **mutter** (compositor do
+GNOME/Wayland desta sandbox) não respeita o `override_redirect=True`
+da nossa janela de vídeo — em vez de sobrepor sem gerência (o
+comportamento correto de X11 puro), ele mostra como uma janela própria
+e independente, na posição que ele decide, ignorando nosso
+`XMoveResizeWindow`. Isso explica por que meus `xwd`/`import` sempre
+mostravam preto: a superfície que EU capturava (pelo ID X11 real, com
+a geometria certa) não é a mesma superfície que o mutter decide
+mostrar pro usuário.
+
+### O que fiz
+Só atualizei [[known-issues]] com essa confirmação (fecha a incerteza
+que tinha ficado — antes eu tinha "decodifica mas não sei se aparece
+na tela"; agora sei que aparece, só que não encaixado). **Não mudei
+código**: isso é uma particularidade de mutter/XWayland com clientes
+X11 crus, não existe em Xorg sem compositor (o ambiente real do
+dispositivo Armbian), e não tenho como testar um fix pra isso aqui de
+forma que valha a pena pro alvo real. Não matei o processo que o
+usuário tinha rodado (não é meu pra derrubar sem avisar).
+
+### Para a próxima sessão
+Se isso for testado no Armbian real e o mesmo problema aparecer lá
+(o que seria uma surpresa, já que não tem compositor), aí sim vale
+investigar mudanças de código (ex.: window hints adicionais, ou
+abandonar a técnica de override-redirect por uma janela gerenciada
+normal). Até lá, tratar como confirmado: **limitação do ambiente de
+desenvolvimento, não do código**.
+
+---
+
 ## Sessão de 2026-09-27 (parte 7) — "corrija os known-issues" (diagnóstico conclusivo do item 5)
 
 ### Pedido do usuário

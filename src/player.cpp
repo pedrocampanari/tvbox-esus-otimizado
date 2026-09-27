@@ -37,7 +37,16 @@ bool VideoPlayer::Init(int screenX, int screenY, int width, int height) {
     videoWindow_ = XCreateWindow(display_, root, screenX, screenY, width, height, 0,
                                   CopyFromParent, InputOutput, CopyFromParent,
                                   CWBackPixel | CWOverrideRedirect, &attrs);
-    XFlush(display_);
+    // XSync (não XFlush): precisamos que o servidor X já tenha
+    // processado o CreateWindow antes de devolver o controle — Play()
+    // pode rodar logo em seguida (ex.: primeiro slide já é vídeo) e
+    // spawna o mpv, que abre sua PRÓPRIA conexão X11 e tenta anexar
+    // nessa janela por ID. XFlush só garante que o pedido foi enviado,
+    // não que o servidor já aplicou; sem esse XSync existe uma corrida
+    // real onde o mpv tenta usar uma janela que o servidor ainda não
+    // terminou de criar e falha rápido (confirmado: reproduzido de
+    // verdade quando o primeiro slide é vídeo logo na inicialização).
+    XSync(display_, False);
     // A janela começa desmapeada (invisível): só aparece quando um slide
     // de vídeo está ativo (ver Play/Stop).
     return true;
@@ -75,7 +84,10 @@ bool VideoPlayer::Play(const Campaign &campaign) {
     if (streamUrl.empty()) return false;
 
     XMapRaised(display_, videoWindow_);
-    XFlush(display_);
+    // XSync pelo mesmo motivo do Init(): garantir que o servidor já
+    // mapeou a janela antes do mpv (processo à parte, conexão X11
+    // própria) tentar anexar nela via --wid.
+    XSync(display_, False);
 
     pid_t pid = fork();
     if (pid < 0) return false;
