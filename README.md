@@ -48,8 +48,11 @@ make clean    # remove artefatos de build
 ```
 
 Dependências de desenvolvimento (para compilar): `cmake`, `g++` (C++17),
-headers de desenvolvimento do X11 (`libx11-dev` no Debian/Armbian). O
-Raylib é baixado e compilado automaticamente pelo CMake.
+headers de desenvolvimento do X11 — **não é só `libx11-dev`**: o GLFW
+(empacotado dentro do Raylib) também precisa de RandR/Xinerama/Xcursor/
+Xi/Xext, então use o metapacote `xorg-dev` (mais `libgl1-mesa-dev` pros
+headers de OpenGL) — é isso que `install.sh --build` instala. O Raylib
+em si é baixado e compilado automaticamente pelo CMake.
 
 Dependências de runtime no dispositivo (não precisam estar presentes
 para compilar, só para o app funcionar de verdade em produção):

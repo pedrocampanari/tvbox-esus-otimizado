@@ -50,8 +50,14 @@ $SUDO apt install -y \
   python3-pip
 
 if [ "$WITH_BUILD_DEPS" = true ]; then
-  log "Instalando dependências de build (--build): cmake, g++, libx11-dev, git"
-  $SUDO apt install -y cmake g++ libx11-dev git
+  # xorg-dev: metapacote oficial que o próprio GLFW recomenda pra
+  # compilar no X11 — cobre libx11-dev + libxrandr-dev + libxinerama-dev
+  # + libxcursor-dev + libxi-dev + libxext-dev de uma vez. Só libx11-dev
+  # sozinho NÃO é suficiente (confirmado: "RandR headers not found" ao
+  # compilar sem os outros). libgl1-mesa-dev: headers de OpenGL que o
+  # raylib precisa (GRAPHICS_API_OPENGL_33).
+  log "Instalando dependências de build (--build): cmake, g++, xorg-dev, libgl1-mesa-dev, git"
+  $SUDO apt install -y cmake g++ xorg-dev libgl1-mesa-dev git
 fi
 
 # yt-dlp NUNCA via apt: o pacote do Debian trava numa versão antiga que
