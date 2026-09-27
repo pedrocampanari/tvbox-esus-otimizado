@@ -1,5 +1,48 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 14) — painel institucional nos outros 75% (Chromium)
+
+### Pedido do usuário
+Preencher os 75% da tela que sobram com
+`https://esus.treslagoas.ms.gov.br/painel` — perguntou se devia ser
+Firefox em modo kiosk ou uma solução mais otimizada.
+
+### Investigação
+Sugeri testar WPE WebKit (Cog) primeiro por ser o motor de referência
+pra kiosk embarcado. Baixei e inspecionei o `.deb` do `cog` no Debian
+de verdade: só tem plugins `drm`/`wl`/`headless`, **sem X11**. Rodar
+ele exigiria um compositor Wayland — reabriria o problema de `--wid`
+ignorado que a parte 10 desta mesma sessão resolveu à força. Descartado
+sem reescrever o app inteiro pra DRM (desproporcional só por causa do
+painel).
+
+### O que fiz
+`exec.sh`: adicionei lançamento do Chromium em modo `--app` (não
+`--kiosk`, que forçaria tela cheia) nos outros 75%, com detecção de
+resolução via `xrandr` e reinício automático em loop (mesmo padrão do
+app de vídeo). `PANEL_URL`/`PANEL_ENABLED` configuráveis via variável
+de ambiente. `install.sh` ganhou `chromium` na lista de pacotes.
+
+### Verificado (parcial — sem sudo nesta sandbox pra instalar Chromium)
+- Lógica de detecção de resolução via `xrandr` testada isoladamente
+  com a saída real desta sandbox (1366x768 → 1024 calculado pra 75%,
+  bate).
+- Sintaxe do `exec.sh`/`install.sh` validada (`bash -n`).
+- **NÃO testei o Chromium renderizando de verdade** (sem `sudo` com
+  senha aqui). Pedi pro usuário instalar via `!` se quiser que eu
+  valide mais, mas segui com a implementação já que a lógica em volta
+  (resolução, flags, loop de reinício) está sólida e é o mesmo padrão
+  já comprovado pro app de vídeo.
+
+### Risco real documentado, não resolvido
+Rodar Chromium + nosso app + `mpv` decodificando ao mesmo tempo no
+orçamento de 2GB do RK3229 é um risco genuíno (Chromium sozinho já
+costuma passar de 200-300MB). Só o teste no dispositivo real vai dizer
+se isso é viável ou se precisa reconsiderar (ex.: Chromium só quando
+não tem vídeo tocando, ou reduzir ainda mais o footprint do vídeo).
+
+---
+
 ## Sessão de 2026-09-27 (parte 13) — animação de loading nos vídeos
 
 ### Pedido do usuário

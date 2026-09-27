@@ -56,7 +56,8 @@ em si é baixado e compilado automaticamente pelo CMake.
 
 Dependências de runtime no dispositivo (não precisam estar presentes
 para compilar, só para o app funcionar de verdade em produção):
-`mpv`, `yt-dlp` (+ `python3`), `curl`.
+`mpv`, `yt-dlp` (+ `python3`), `curl`, `chromium` (painel institucional,
+ver seção "Rodar em modo kiosk" abaixo).
 
 > Fluxo recomendado: compilar num host de desenvolvimento (ou CI) e
 > copiar apenas o binário final para o dispositivo Armbian — não é
@@ -77,7 +78,11 @@ antiga que para de funcionar contra o YouTube. O script instala via
 
 `exec.sh` cuida de entrar no diretório certo (pros caminhos relativos
 de `assets/`/`config/` funcionarem), desligar blank/DPMS/screensaver do
-X, e reiniciar o app sozinho se ele cair. Aponte o `~/.xinitrc` pra ele:
+X, reiniciar o app sozinho se ele cair, **e subir o Chromium em modo
+app** (sem barra de endereço/abas) mostrando o painel institucional nos
+outros 75% da tela (o app de vídeo fica ancorado nos 25% da direita —
+ver `kAnchorWindowToRightEdge` em `include/config.h`). Aponte o
+`~/.xinitrc` pra ele:
 
 ```sh
 echo 'exec /caminho/completo/para/tvbox-esus-otimizado/exec.sh' > ~/.xinitrc
@@ -85,8 +90,25 @@ chmod +x ~/.xinitrc
 startx
 ```
 
-Log de execução (inclusive reinícios) fica em `kiosk.log`, na raiz do
-projeto.
+**Painel institucional (Chromium)**: URL fixa em `exec.sh`
+(`PANEL_URL`), pode ser sobrescrita sem editar o script:
+```sh
+PANEL_URL="https://outra.url/painel" startx
+```
+Pra desligar o painel e rodar só o vídeo:
+```sh
+PANEL_ENABLED=0 startx
+```
+
+Por que Chromium e não WPE WebKit/Cog (mais leve): o pacote `cog` do
+Debian só tem renderização DRM/Wayland/headless, sem X11 — rodar ele
+exigiria um compositor Wayland por baixo, reabrindo o problema de
+`--wid` sendo ignorado que já tivemos que resolver à força (ver
+`docs/memory/known-issues.md` item 5). Chromium em modo `--app` é um
+cliente X11 comum, sem esse conflito.
+
+Logs ficam na raiz do projeto: `kiosk.log` (app de vídeo) e
+`panel.log` (Chromium).
 
 ## Estado atual
 

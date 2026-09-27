@@ -15,9 +15,23 @@
 #   - esconde o cursor do mouse com `unclutter`, se estiver instalado
 #     (opcional — não trava se não tiver);
 #   - reinicia o binário sozinho se ele cair (crash do app, do mpv
-#     puxando o processo, etc.) em vez de deixar a tela preta parada.
+#     puxando o processo, etc.) em vez de deixar a tela preta parada;
+#   - sobe o Chromium (modo app, sem chrome de navegador) nos outros
+#     75% da tela mostrando o painel institucional — ver PANEL_URL
+#     abaixo. Desative com PANEL_ENABLED=0 (variável de ambiente) se
+#     quiser rodar só o kiosk de vídeo.
+#
+# Por que Chromium e não WPE WebKit/Cog: o pacote `cog` do Debian só
+# tem plugins de renderização DRM/Wayland/headless, nenhum X11 — não dá
+# pra rodar como mais uma janela ao lado do nosso app sem reintroduzir
+# um compositor Wayland (o que reabriria o problema de `--wid` sendo
+# ignorado que já resolvemos à força — ver known-issues.md item 5).
+# Chromium em modo `--app` é um cliente X11 normal, sem esse conflito.
 
 set -u
+
+PANEL_ENABLED="${PANEL_ENABLED:-1}"
+PANEL_URL="${PANEL_URL:-https://esus.treslagoas.ms.gov.br/painel}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -58,6 +72,60 @@ if command -v unclutter >/dev/null 2>&1; then
 fi
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') kiosk iniciado" >> "$LOG_FILE"
+
+# --- Painel institucional (Chromium) nos outros 75% da tela ---
+if [ "$PANEL_ENABLED" = "1" ]; then
+  CHROMIUM_BIN=""
+  if command -v chromium >/dev/null 2>&1; then
+    CHROMIUM_BIN="chromium"
+  elif command -v chromium-browser >/dev/null 2>&1; then
+    CHROMIUM_BIN="chromium-browser"
+  fi
+
+  if [ -z "$CHROMIUM_BIN" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') AVISO: chromium nao encontrado no PATH — painel nao sera exibido (rode ./install.sh)" >> "$LOG_FILE"
+  else
+    # Detecta a resolução da tela pra calcular os 75% do painel (o
+    # nosso app já ocupa os outros 25%, ancorado à direita — ver
+    # include/config.h::kAnchorWindowToRightEdge). Cai num padrão
+    # 1920x1080 se não conseguir detectar (ex.: xrandr indisponível).
+    SCREEN_WH=$(xrandr --current 2>/dev/null | awk '
+      / connected/ {
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^[0-9]+x[0-9]+\+[0-9]+\+[0-9]+$/) { print $i; exit }
+        }
+      }')
+    SCREEN_WH="${SCREEN_WH:-1920x1080+0+0}"
+    SCREEN_W="${SCREEN_WH%%x*}"
+    SCREEN_H="${SCREEN_WH#*x}"
+    SCREEN_H="${SCREEN_H%%+*}"
+    PANEL_W=$((SCREEN_W * 75 / 100))
+
+    PANEL_PROFILE_DIR="$SCRIPT_DIR/.chromium-kiosk-profile"
+    PANEL_LOG="$SCRIPT_DIR/panel.log"
+
+    (
+      while true; do
+        "$CHROMIUM_BIN" \
+          --app="$PANEL_URL" \
+          --window-position=0,0 \
+          --window-size="${PANEL_W},${SCREEN_H}" \
+          --user-data-dir="$PANEL_PROFILE_DIR" \
+          --noerrdialogs \
+          --disable-infobars \
+          --disable-session-crashed-bubble \
+          --disable-translate \
+          --no-first-run \
+          --check-for-update-interval=31536000 \
+          >> "$PANEL_LOG" 2>&1
+        echo "$(date '+%Y-%m-%d %H:%M:%S') painel (chromium) saiu; reiniciando em 3s" >> "$PANEL_LOG"
+        sleep 3
+      done
+    ) &
+
+    echo "$(date '+%Y-%m-%d %H:%M:%S') painel (chromium) iniciado: ${PANEL_URL} em ${PANEL_W}x${SCREEN_H}+0+0" >> "$LOG_FILE"
+  fi
+fi
 
 # Loop de resiliência: se o app cair por qualquer motivo, reinicia
 # sozinho em vez de deixar a tela preta parada. Um kiosk sem ninguém

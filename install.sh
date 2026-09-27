@@ -40,14 +40,15 @@ fi
 log "Atualizando índices do apt"
 $SUDO apt update
 
-log "Instalando dependências de runtime (X11, mpv, curl, python3)"
+log "Instalando dependências de runtime (X11, mpv, curl, python3, chromium)"
 $SUDO apt install -y \
   xserver-xorg \
   xinit \
   mpv \
   curl \
   python3 \
-  python3-pip
+  python3-pip \
+  chromium
 
 if [ "$WITH_BUILD_DEPS" = true ]; then
   # xorg-dev: metapacote oficial que o próprio GLFW recomenda pra
@@ -79,9 +80,12 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$LOCAL_BIN"; then
 fi
 
 log "Verificação"
-echo -n "mpv:    "; mpv --version | head -1
-echo -n "yt-dlp: "; "$LOCAL_BIN/yt-dlp" --version
-echo -n "curl:   "; curl --version | head -1
+echo -n "mpv:      "; mpv --version | head -1
+echo -n "yt-dlp:   "; "$LOCAL_BIN/yt-dlp" --version
+echo -n "curl:     "; curl --version | head -1
+echo -n "chromium: "; (command -v chromium || command -v chromium-browser) >/dev/null 2>&1 \
+  && (chromium --version 2>/dev/null || chromium-browser --version 2>/dev/null) \
+  || echo "não encontrado"
 if [ "$WITH_BUILD_DEPS" = true ]; then
   echo -n "cmake:  "; cmake --version | head -1
   echo -n "g++:    "; g++ --version | head -1
@@ -91,6 +95,11 @@ echo
 echo "Pronto. Lembre de manter o yt-dlp atualizado de tempos em tempos:"
 echo "  yt-dlp -U"
 echo
-echo "Pra rodar o kiosk direto ao subir o X (sem gerenciador de janelas):"
-echo "  echo 'exec /caminho/para/tvbox_esus_app' > ~/.xinitrc"
+echo "Pra rodar o kiosk (+ painel institucional no Chromium) direto ao"
+echo "subir o X (sem gerenciador de janelas):"
+echo "  echo 'exec /caminho/para/tvbox-esus-otimizado/exec.sh' > ~/.xinitrc"
+echo "  chmod +x ~/.xinitrc"
 echo "  startx"
+echo
+echo "Pra desligar o painel do Chromium e rodar só o vídeo:"
+echo "  PANEL_ENABLED=0 startx"

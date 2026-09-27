@@ -1,5 +1,42 @@
 # Problemas e decisões em aberto conhecidas
 
+## -2. Painel institucional nos outros 75% da tela (Chromium) — implementado, NÃO testado de ponta a ponta
+Pedido do usuário: preencher os 75% da tela que sobram (nosso app
+ocupa 25%, ancorado à direita) com
+`https://esus.treslagoas.ms.gov.br/painel`.
+
+**WPE WebKit/Cog foi cogitado primeiro e descartado**: o pacote `cog`
+do Debian (confirmei baixando e inspecionando o `.deb` de verdade)
+só traz plugins de renderização `drm` (assume a tela inteira sozinho,
+sem servidor gráfico), `wl` (Wayland) e `headless` — **nenhum
+plugin X11**. Rodar ele exigiria um compositor Wayland por baixo, o
+que reabriria exatamente o problema que a sessão inteira de
+2026-09-27 (parte 10) resolveu à força: `mpv --wid` sendo ignorado sob
+Wayland/XWayland. Reescrever o app inteiro pra `PLATFORM_DRM` (sem X11
+nenhum) resolveria isso de outra forma, mas é uma reformulação grande
+de arquitetura só por causa desse painel — desproporcional ao pedido.
+
+**Escolhido: Chromium em modo `--app`** (não `--kiosk`, que força
+tela cheia e brigaria com o `--window-size` parcial que precisamos).
+`exec.sh` agora:
+- detecta a resolução via `xrandr` e calcula 75% de largura;
+- sobe `chromium --app=<PANEL_URL> --window-position=0,0
+  --window-size=<75%,altura_total>` num loop com reinício automático
+  (mesmo padrão do app de vídeo);
+- variáveis de ambiente `PANEL_URL`/`PANEL_ENABLED` pra configurar sem
+  editar o script.
+
+**O que NÃO foi testado**: não consegui instalar `chromium` nesta
+sandbox (sem `sudo` com senha aqui, mesma limitação de sempre) — só
+validei isoladamente a lógica de detecção de resolução via `xrandr`
+(bate: 1366x768 real desta sandbox → 1024 calculado pra 75%) e a
+sintaxe do script. **Não confirmei**: se o Chromium do apt renderiza o
+painel de verdade, se `--app` realmente evita decoração de janela sem
+gerenciador de janelas rodando, nem o impacto de RAM de rodar Chromium
++ nosso app + `mpv` decodificando ao mesmo tempo no orçamento de 2GB do
+RK3229 (risco real — Chromium sozinho já costuma passar de 200-300MB).
+Precisa validar no dispositivo real antes de considerar isso pronto.
+
 ## -1. Animação de carregamento nos slides de vídeo — implementado em 2026-09-27
 Pedido do usuário: mostrar algo enquanto o vídeo ainda está
 resolvendo/bufferizando, em vez de tela preta/cor neutra parada.

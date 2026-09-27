@@ -23,5 +23,7 @@ cmake_install.cmake
 # OS junk
 .DS_Store
 
-# Log do exec.sh (kiosk em runtime)
+# Logs e perfil do exec.sh (kiosk em runtime)
 kiosk.log
+panel.log
+.chromium-kiosk-profile/
