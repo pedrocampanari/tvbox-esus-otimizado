@@ -1,5 +1,61 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 15) — Chromium some sem `--ozone-platform=x11`; timeout de vídeo curto demais
+
+### Contexto
+Usuário instalou `chromium` de verdade no dispositivo (e também nesta
+sandbox, via `sudo apt-get install -y chromium` rodado por ele mesmo) e
+testou a implementação da parte 14. Relatou dois bugs ao mesmo tempo:
+"O video só ficou aparecendo o loading e nada do video, o outro lado
+com chromium nao apareceu."
+
+### Bug 1: vídeo travado no spinner pra sempre
+Causa: `kVideoLoadTimeoutSeconds` estava em 8s — valor copiado do
+timeout de iframe do **site original**, que media só o carregamento de
+uma página já hospedada pelo YouTube. Nosso `mpv` precisa rodar
+`yt-dlp` do zero pra resolver a URL, o que no CPU fraco do RK3229
+regularmente passa de 8s — todo vídeo tava estourando o timeout antes
+de `IsVideoActuallyPlaying()` conseguir confirmar. Fix: subi pra 30s
+(`include/config.h::kVideoLoadTimeoutSeconds`, comentário atualizado
+explicando a diferença). Commit `16615ae`.
+
+### Bug 2: painel Chromium nunca aparecia
+Mesma categoria de bug do `mpv --wid` (item 5 de [[known-issues]]),
+só que no Chromium: ele prefere criar uma superfície Wayland nativa
+sempre que existe um compositor Wayland alcançável, ignorando
+`--window-position`/`--window-size` completamente — a janela nunca
+aparece como janela X11 visível. Diagnosticado testando com o Chromium
+de verdade (instalado pelo usuário nesta sandbox):
+- `ps aux` mostrou `--ozone-platform=wayland` nos argumentos do
+  processo GPU/renderer, mesmo sem eu ter passado essa flag;
+- adicionando `--ozone-platform=x11` explicitamente, a janela passou a
+  aparecer no `xwininfo` (`"PEC" ("esus.treslagoas.ms.gov.br__painel"
+  "Chromium")`) na posição/tamanho corretos;
+- screenshot confirmou o painel renderizando de verdade: tela de
+  pareamento "Conectar painel de chamadas" do SAÚDE e-SUS Atenção
+  Primária, com código de 4 dígitos (`GN7W` no teste).
+
+Fix aplicado em `exec.sh`: flag `--ozone-platform=x11` adicionada à
+chamada do Chromium, com comentário explicando o motivo (mesmo padrão
+do `--gpu-context=x11egl` do mpv na parte 10).
+
+### Verificado de verdade nesta sandbox (não só compilou/rodou)
+- Testei a chamada exata do Chromium com todas as flags finais de
+  `exec.sh` (incluindo `--ozone-platform=x11` e
+  `--disable-features=Translate,TranslateUI`) isoladamente, com
+  `--user-data-dir` novo, e capturei screenshot do resultado: painel
+  renderiza corretamente na janela X11 certa.
+- Repeti duas vezes com pequenas variações de flags pra garantir que
+  não era coincidência de uma sessão anterior de perfil/cache.
+
+### O que ainda NÃO foi validado (precisa do RK3229 real)
+Impacto de RAM de rodar Chromium + nosso app + `mpv` decodificando ao
+mesmo tempo no orçamento de 2GB (risco já documentado na parte 14,
+continua em aberto). O timeout de 30s pro vídeo também não foi
+confirmado no hardware real ainda — só nesta sandbox x86_64.
+
+---
+
 ## Sessão de 2026-09-27 (parte 14) — painel institucional nos outros 75% (Chromium)
 
 ### Pedido do usuário

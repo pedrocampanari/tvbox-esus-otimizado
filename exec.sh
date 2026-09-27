@@ -74,6 +74,13 @@ fi
 echo "$(date '+%Y-%m-%d %H:%M:%S') kiosk iniciado" >> "$LOG_FILE"
 
 # --- Painel institucional (Chromium) nos outros 75% da tela ---
+# --ozone-platform=x11 é obrigatório: sem forçar, o Chromium (assim
+# como o mpv, ver known-issues.md item 5) prefere Wayland nativo sempre
+# que existe um compositor Wayland alcançável, ignorando
+# --window-position/--window-size (que só fazem sentido em X11) e
+# nunca aparecendo como uma janela visível por fora dele. Confirmado
+# testando de verdade: sem essa flag, a janela nem aparece no
+# `xwininfo`; com ela, aparece corretamente com o título/classe certos.
 if [ "$PANEL_ENABLED" = "1" ]; then
   CHROMIUM_BIN=""
   if command -v chromium >/dev/null 2>&1; then
@@ -111,10 +118,12 @@ if [ "$PANEL_ENABLED" = "1" ]; then
           --window-position=0,0 \
           --window-size="${PANEL_W},${SCREEN_H}" \
           --user-data-dir="$PANEL_PROFILE_DIR" \
+          --ozone-platform=x11 \
           --noerrdialogs \
           --disable-infobars \
           --disable-session-crashed-bubble \
           --disable-translate \
+          --disable-features=Translate,TranslateUI \
           --no-first-run \
           --check-for-update-interval=31536000 \
           >> "$PANEL_LOG" 2>&1

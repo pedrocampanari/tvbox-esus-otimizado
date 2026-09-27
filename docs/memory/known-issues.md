@@ -20,7 +20,7 @@ confirmação do usuário) — se 30s ainda não for suficiente em algum
 vídeo específico, aumentar mais é seguro (só atrasa a desistência em
 caso de falha real, não afeta o caminho de sucesso).
 
-## -2. Painel institucional nos outros 75% da tela (Chromium) — implementado, NÃO testado de ponta a ponta
+## -2. Painel institucional nos outros 75% da tela (Chromium) — RESOLVIDO em 2026-09-27
 Pedido do usuário: preencher os 75% da tela que sobram (nosso app
 ocupa 25%, ancorado à direita) com
 `https://esus.treslagoas.ms.gov.br/painel`.
@@ -46,16 +46,33 @@ tela cheia e brigaria com o `--window-size` parcial que precisamos).
 - variáveis de ambiente `PANEL_URL`/`PANEL_ENABLED` pra configurar sem
   editar o script.
 
-**O que NÃO foi testado**: não consegui instalar `chromium` nesta
-sandbox (sem `sudo` com senha aqui, mesma limitação de sempre) — só
-validei isoladamente a lógica de detecção de resolução via `xrandr`
-(bate: 1366x768 real desta sandbox → 1024 calculado pra 75%) e a
-sintaxe do script. **Não confirmei**: se o Chromium do apt renderiza o
-painel de verdade, se `--app` realmente evita decoração de janela sem
-gerenciador de janelas rodando, nem o impacto de RAM de rodar Chromium
-+ nosso app + `mpv` decodificando ao mesmo tempo no orçamento de 2GB do
-RK3229 (risco real — Chromium sozinho já costuma passar de 200-300MB).
-Precisa validar no dispositivo real antes de considerar isso pronto.
+**Bug encontrado e corrigido: mesma categoria do `mpv --wid` (item 5)**.
+Depois que o usuário instalou `chromium` na sandbox e testamos de
+verdade, a janela do painel simplesmente não aparecia — `xwininfo` não
+mostrava nenhuma janela com o título/classe do painel, mesmo com o
+processo do Chromium rodando normalmente. Causa: Chromium, assim como o
+`mpv`, prefere criar uma superfície Wayland nativa sempre que existe um
+compositor Wayland alcançável (`$WAYLAND_DISPLAY`), ignorando
+completamente `--window-position`/`--window-size` (que só fazem sentido
+em X11) — a janela existe, só que nunca aparece como uma janela X11
+visível. Confirmado isolando a variável: sem forçar a plataforma, o
+processo GPU/renderer do Chromium mostrava `--ozone-platform=wayland`
+em `ps aux`; adicionando `--ozone-platform=x11` explicitamente, a janela
+passou a aparecer no `xwininfo` (`"PEC" ("esus.treslagoas.ms.gov.br__painel"
+"Chromium")`) na posição/tamanho corretos, e um screenshot confirmou o
+painel renderizando de verdade (tela de pareamento "Conectar painel de
+chamadas" do SAÚDE e-SUS Atenção Primária, com código de 4 dígitos).
+
+**Fix aplicado em `exec.sh`**: flag `--ozone-platform=x11` adicionada
+à chamada do Chromium, junto com um comentário explicando o motivo
+(mesmo padrão do `--gpu-context=x11egl` do mpv, ver item 5).
+
+**O que ainda NÃO foi validado** (precisa do dispositivo real RK3229):
+o impacto de RAM de rodar Chromium + nosso app + `mpv` decodificando ao
+mesmo tempo no orçamento de 2GB (risco real — Chromium sozinho já
+costuma passar de 200-300MB) — ver item de RAM aberto na sessão. A
+lógica de detecção de resolução via `xrandr` já foi validada (bate:
+1366x768 real desta sandbox → 1024 calculado pra 75%).
 
 ## -1. Animação de carregamento nos slides de vídeo — implementado em 2026-09-27
 Pedido do usuário: mostrar algo enquanto o vídeo ainda está
