@@ -22,3 +22,6 @@ cmake_install.cmake
 
 # OS junk
 .DS_Store
+
+# Log do exec.sh (kiosk em runtime)
+kiosk.log

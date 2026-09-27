@@ -73,6 +73,21 @@ para compilar, só para o app funcionar de verdade em produção):
 antiga que para de funcionar contra o YouTube. O script instala via
 `pip3 install --user`. Ver `docs/memory/known-issues.md` item 5.
 
+### Rodar em modo kiosk (sem ambiente de desktop)
+
+`exec.sh` cuida de entrar no diretório certo (pros caminhos relativos
+de `assets/`/`config/` funcionarem), desligar blank/DPMS/screensaver do
+X, e reiniciar o app sozinho se ele cair. Aponte o `~/.xinitrc` pra ele:
+
+```sh
+echo 'exec /caminho/completo/para/tvbox-esus-otimizado/exec.sh' > ~/.xinitrc
+chmod +x ~/.xinitrc
+startx
+```
+
+Log de execução (inclusive reinícios) fica em `kiosk.log`, na raiz do
+projeto.
+
 ## Estado atual
 
 O app compila, abre a janela no tamanho/posição corretos (canto
