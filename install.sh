@@ -45,6 +45,7 @@ $SUDO apt install -y \
   xserver-xorg \
   xinit \
   x11-xserver-utils \
+  unclutter-xfixes \
   mpv \
   curl \
   python3 \
@@ -68,6 +69,25 @@ fi
 # --user, sem venv, sem mexer em pacotes do sistema.
 log "Instalando/atualizando yt-dlp via pip (nunca via apt)"
 pip3 install --user --upgrade --break-system-packages yt-dlp
+
+# Kiosk fechado não pode mostrar NENHUMA mensagem/barra do próprio
+# Chromium (aviso de tradução automática, aviso de flag de linha de
+# comando não suportada por causa do --no-sandbox em exec.sh, etc). Só
+# flag de linha de comando não é confiável pra isso (confirmado: a
+# barra de tradução apareceu mesmo com --disable-translate). A forma
+# suportada de verdade é política de enterprise via JSON — funciona
+# tanto no binário `chromium` (Debian) quanto `chromium-browser`
+# (derivados), então escreve nos dois diretórios possíveis.
+log "Configurando políticas do Chromium (desliga tradutor + aviso de flag não suportada)"
+for policy_dir in /etc/chromium/policies/managed /etc/chromium-browser/policies/managed; do
+  $SUDO mkdir -p "$policy_dir"
+  $SUDO tee "$policy_dir/tvbox-esus-kiosk.json" > /dev/null <<'JSON'
+{
+  "TranslateEnabled": false,
+  "CommandLineFlagSecurityWarningsEnabled": false
+}
+JSON
+done
 
 LOCAL_BIN="$HOME/.local/bin"
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$LOCAL_BIN"; then

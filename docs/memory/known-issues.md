@@ -1,5 +1,35 @@
 # Problemas e decisões em aberto conhecidas
 
+## -4. Cursor do mouse visível + mensagens do navegador (tradução automática, aviso de flag não suportada) — RESOLVIDO em 2026-09-27
+Usuário reportou, depois de confirmar que o Chromium já renderizava:
+"nao quero que apareca o cursor. nem mensagens do navegador como O
+tradutor" (também tinha visto o banner "You are using an unsupported
+command-line flag: -no-sandbox").
+
+**Cursor**: `exec.sh` já tinha lógica pra esconder via `unclutter`, mas
+era só opcional (`if command -v unclutter`) — no dispositivo real esse
+pacote nunca foi instalado por `install.sh`, então o cursor ficava
+visível. Troquei a dependência preferida pra `unclutter-xfixes` (usa a
+extensão Xfixes do X, mais confiável que o `unclutter` clássico —
+projetos de kiosk reportam o clássico falhando em esconder o cursor
+sobre janelas filhas, que é exatamente o tipo de janela que o `mpv` usa
+aqui via `--wid`), com fallback pro `unclutter` clássico se só ele
+estiver disponível. Adicionado a `install.sh`.
+
+**Mensagens do navegador**: `exec.sh` já tinha `--disable-translate` e
+`--disable-features=Translate,TranslateUI`, mas a barra de tradução
+apareceu mesmo assim (confirmado pelo usuário) — flag de linha de
+comando não é garantia de verdade pra isso em todas as versões do
+Chromium. A forma realmente suportada é política de enterprise via
+JSON: `install.sh` agora escreve
+`/etc/{chromium,chromium-browser}/policies/managed/tvbox-esus-kiosk.json`
+com `TranslateEnabled: false` (desliga tradução automática de vez) e
+`CommandLineFlagSecurityWarningsEnabled: false` (desliga o aviso de
+"flag não suportada" causado pelo `--no-sandbox` do item -3 abaixo).
+Essas duas chaves são políticas reais e documentadas do Chromium, não
+um hack — ainda **não confirmado no dispositivo real** (aplicado nesta
+sessão, aguardando `./install.sh` + reteste).
+
 ## -3. Timeout de loading do vídeo (8s) causava spinner infinito no RK3229 real — RESOLVIDO em 2026-09-27
 Primeiro teste no dispositivo real com a animação de loading (parte
 13): todo vídeo ficava preso no spinner, nunca chegava a tocar.
@@ -88,14 +118,18 @@ calculando 1440px de painel) mesmo a tela real sendo outra resolução.
 usado pra desligar blank/DPMS/screensaver) — faltava em `install.sh`,
 adicionado agora.
 
-**O que ainda NÃO foi validado** (precisa do dispositivo real RK3229):
-o impacto de RAM de rodar Chromium + nosso app + `mpv` decodificando ao
-mesmo tempo no orçamento de 2GB (risco real — Chromium sozinho já
-costuma passar de 200-300MB) — ver item de RAM aberto na sessão. Os
-três fixes acima (ozone-platform, no-sandbox, x11-xserver-utils) ainda
-não foram confirmados juntos no hardware real — só o `--ozone-platform=x11`
-foi confirmado isoladamente (nesta sandbox, com Chromium rodando como
-usuário comum, onde `--no-sandbox` não é necessário).
+**Confirmado no dispositivo real em 2026-09-27**: com os três fixes
+(`--ozone-platform=x11`, `--no-sandbox`, `x11-xserver-utils` instalado)
+o Chromium renderiza o painel de verdade no RK3229. Único resquício:
+o próprio `--no-sandbox` dispara o aviso padrão do Chromium "You are
+using an unsupported command-line flag" — não é um erro, é só um
+banner informativo, mas não pode aparecer num kiosk (ver item -1.1
+abaixo pro fix).
+
+**O que ainda NÃO foi validado**: o impacto de RAM de rodar Chromium +
+nosso app + `mpv` decodificando ao mesmo tempo no orçamento de 2GB
+(risco real — Chromium sozinho já costuma passar de 200-300MB) — ver
+item de RAM aberto na sessão.
 
 ## -1. Animação de carregamento nos slides de vídeo — implementado em 2026-09-27
 Pedido do usuário: mostrar algo enquanto o vídeo ainda está

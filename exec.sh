@@ -66,8 +66,16 @@ xset s off      2>/dev/null || true
 xset s noblank  2>/dev/null || true
 xset -dpms      2>/dev/null || true
 
-# Esconde o cursor do mouse (opcional; não é dependência obrigatória).
-if command -v unclutter >/dev/null 2>&1; then
+# Esconde o cursor do mouse. Um kiosk sem teclado/mouse à mostra não
+# pode deixar a setinha parada no meio da tela. Prefere
+# `unclutter-xfixes` (usa a extensão Xfixes do X pra esconder o cursor
+# de forma confiável e leve — a extensão do `unclutter` clássico é
+# conhecida por falhar em esconder sobre janelas filhas, exatamente o
+# tipo de janela que o `mpv` usa aqui). Cai pro `unclutter` clássico se
+# só ele estiver instalado.
+if command -v unclutter-xfixes >/dev/null 2>&1; then
+  unclutter-xfixes -idle 0 &
+elif command -v unclutter >/dev/null 2>&1; then
   unclutter -idle 0 &
 fi
 
@@ -92,6 +100,18 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') kiosk iniciado" >> "$LOG_FILE"
 # nenhum (nem um usuário não-privilegiado dedicado ao kiosk), perder
 # essa camada extra não piora o modelo de ameaça real deste dispositivo
 # fechado de exibição institucional.
+#
+# Nenhuma mensagem/barra do navegador pode aparecer neste kiosk (nem o
+# aviso "You are using an unsupported command-line flag" causado pelo
+# próprio --no-sandbox acima, nem a barra de tradução automática). Só
+# flag de linha de comando NÃO é confiável pra isso (o `--disable-
+# translate`/`--disable-features=Translate,TranslateUI` abaixo já
+# existiam e a barra apareceu mesmo assim, testado de verdade). A forma
+# suportada de verdade pelo Chromium é política de enterprise via JSON
+# em /etc/chromium/policies/managed/ — `install.sh` já escreve isso
+# (`TranslateEnabled: false` +
+# `CommandLineFlagSecurityWarningsEnabled: false`). Se rodar sem passar
+# pelo install.sh, essas mensagens voltam a aparecer.
 if [ "$PANEL_ENABLED" = "1" ]; then
   CHROMIUM_BIN=""
   if command -v chromium >/dev/null 2>&1; then

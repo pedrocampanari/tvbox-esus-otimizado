@@ -57,7 +57,8 @@ em si é baixado e compilado automaticamente pelo CMake.
 Dependências de runtime no dispositivo (não precisam estar presentes
 para compilar, só para o app funcionar de verdade em produção):
 `mpv`, `yt-dlp` (+ `python3`), `curl`, `chromium` (painel institucional,
-ver seção "Rodar em modo kiosk" abaixo).
+ver seção "Rodar em modo kiosk" abaixo), `x11-xserver-utils` (`xrandr`/
+`xset`) e `unclutter-xfixes` (esconde o cursor do mouse).
 
 > Fluxo recomendado: compilar num host de desenvolvimento (ou CI) e
 > copiar apenas o binário final para o dispositivo Armbian — não é
@@ -109,6 +110,14 @@ cliente X11 comum, sem esse conflito.
 
 Logs ficam na raiz do projeto: `kiosk.log` (app de vídeo) e
 `panel.log` (Chromium).
+
+**Nenhuma mensagem do navegador aparece na tela** (aviso de tradução
+automática, aviso de "flag de linha de comando não suportada" causado
+pelo `--no-sandbox` que o kiosk real precisa por rodar como root,
+etc.) — `install.sh` já escreve uma política de enterprise do Chromium
+(`/etc/chromium/policies/managed/tvbox-esus-kiosk.json`) desligando
+isso. Rodar `exec.sh` sem ter passado pelo `install.sh` faz essas
+mensagens voltarem a aparecer.
 
 ## Estado atual
 

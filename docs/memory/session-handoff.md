@@ -1,5 +1,45 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 17) — Chromium renderizou; falta esconder cursor e mensagens do navegador
+
+### Contexto
+Usuário puxou o fix da parte 16 (`--no-sandbox` + `x11-xserver-utils`)
+e confirmou: "video nao carregou, porem chromium renderizou" — ou seja,
+o painel institucional finalmente apareceu de verdade no RK3229. Dois
+pedidos novos: "nao quero que apareca o cursor. nem mensagens do
+navegador como O tradutor" (também tinha visto o banner "You are using
+an unsupported command-line flag: -no-sandbox", causado pelo próprio
+fix da parte 16).
+
+### O que fiz
+- **Cursor**: `exec.sh` já escondia o cursor via `unclutter`, mas era
+  opcional e o pacote nunca tinha sido listado em `install.sh` — por
+  isso nunca rodava no dispositivo real. Troquei a preferência pra
+  `unclutter-xfixes` (usa a extensão Xfixes do X, mais confiável sobre
+  janelas filhas do tipo que o `mpv` cria via `--wid`, ao contrário do
+  `unclutter` clássico que tem bugs conhecidos nesse cenário
+  específico), com fallback pro clássico. Adicionado a `install.sh`.
+- **Mensagens do navegador**: os flags `--disable-translate`/
+  `--disable-features=Translate,TranslateUI` que já existiam não foram
+  suficientes (a barra de tradução apareceu mesmo assim, confirmado
+  pelo usuário) — flag de linha de comando não é garantia em todas as
+  versões do Chromium. Troquei pra política de enterprise real via
+  JSON (`TranslateEnabled: false` +
+  `CommandLineFlagSecurityWarningsEnabled: false`, esta última
+  desligando também o banner do `--no-sandbox`), escrita por
+  `install.sh` em `/etc/{chromium,chromium-browser}/policies/managed/
+  tvbox-esus-kiosk.json`.
+
+### O que NÃO foi validado ainda
+Nenhum dos dois fixes desta rodada foi confirmado no dispositivo real
+(aplicados só nesta sessão) — pedido pro usuário rodar `git pull` +
+`./install.sh` de novo (pra pegar `unclutter-xfixes` + o arquivo de
+política) e reteste. O vídeo continua não carregando — ainda não temos
+diagnóstico correlacionado (log + `ps aux` no momento exato da falha)
+pra esse bug específico, que segue em aberto.
+
+---
+
 ## Sessão de 2026-09-27 (parte 16) — Chromium ainda não abria no dispositivo real: falta `--no-sandbox` e `xrandr`
 
 ### Contexto
