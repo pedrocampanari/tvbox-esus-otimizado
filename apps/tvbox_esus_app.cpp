@@ -91,8 +91,9 @@ int main() {
     int monitorH = GetMonitorHeight(monitor);
     int windowW = static_cast<int>(monitorW * kWindowWidthFraction);
     int windowH = static_cast<int>(monitorH * kWindowHeightFraction);
+    int windowX = kAnchorWindowToRightEdge ? (monitorW - windowW) : 0;
     SetWindowSize(windowW, windowH);
-    SetWindowPosition(0, 0);
+    SetWindowPosition(windowX, 0);
     SetTargetFPS(30); // slideshow estático na maior parte do tempo: 30fps já sobra e economiza CPU/energia no RK3229.
 
     LoadUiFonts();

@@ -147,9 +147,14 @@ precisa de `raylib.h`.
 No `main()`, antes do primeiro frame: pega `GetMonitorWidth/Height` do
 monitor primário, calcula `w = monitor_w * 0.25`, `h = monitor_h`,
 chama `InitWindow(w, h, ...)`, remove decoração (`FLAG_WINDOW_UNDECORATED`)
-e posiciona em `(0, 0)`. Esses três números (fração de largura, fração de
-altura, canto de ancoragem) ficam centralizados em `include/config.h`
-para não virar mágica espalhada pelo código.
+e posiciona no canto superior **direito** (`x = monitor_w - w, y = 0` —
+mudou de esquerdo pra direito a pedido do usuário em 2026-09-27, ver
+`kAnchorWindowToRightEdge` em `include/config.h`). Esses números (fração
+de largura, fração de altura, canto de ancoragem) ficam centralizados em
+`include/config.h` para não virar mágica espalhada pelo código. Como a
+janela de vídeo é filha da janela do Raylib (coordenadas relativas ao
+pai, não absolutas de tela — ver módulo `player` abaixo), mudar o canto
+de ancoragem da janela principal não afeta o posicionamento do vídeo.
 
 ## Otimizações de memória (RK3229 / 2GB RAM)
 - Sem libcurl linkada: HTTP via `fork`+`exec` do binário `curl` já

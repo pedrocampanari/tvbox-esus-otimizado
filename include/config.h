@@ -5,12 +5,17 @@
 #include "video_config.h"
 
 // Janela do kiosk: fração da tela do monitor primário.
-// Requisito do projeto: fixo em 25% de largura e 100% de altura,
-// ancorado no canto superior esquerdo.
+// Requisito do projeto: fixo em 25% de largura e 100% de altura.
 namespace kiosk {
 
 constexpr float kWindowWidthFraction = 0.25f;
 constexpr float kWindowHeightFraction = 1.0f;
+
+// Canto de ancoragem horizontal: `true` = canto superior direito
+// (pedido do usuário em 2026-09-27, estava no esquerdo); `false` =
+// canto superior esquerdo. A altura sempre ocupa 100%, então só a
+// ancoragem horizontal importa aqui.
+constexpr bool kAnchorWindowToRightEdge = true;
 
 // URL da página que estamos replicando/raspando.
 constexpr const char *kDisplayUrl = "https://esustv.jfbatl.com.br/display";

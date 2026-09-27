@@ -1,5 +1,27 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 11) — ancoragem da janela: esquerda → direita
+
+### Pedido do usuário
+"Posicione a janela no canto superior direito, pois agora está no
+esquerdo."
+
+### O que fiz
+Adicionei `kAnchorWindowToRightEdge` em `include/config.h` (default
+`true`) e calculei `windowX = monitorW - windowW` quando ativo, em vez
+do `SetWindowPosition(0, 0)` fixo de antes (`apps/tvbox_esus_app.cpp`).
+Como a janela de vídeo é filha da janela do Raylib (coordenadas
+relativas ao pai — ver parte 10), essa mudança não exigiu nenhum ajuste
+no `player.cpp`.
+
+### Verificado de verdade
+Rebuild, rodei o app: `xwininfo` confirmou a janela em `1025,32`
+(monitor de 1366px de largura − 341px da janela = 1025, bate). Tirei
+screenshot: vídeo continua aparecendo corretamente posicionado dentro
+da área reservada, agora com a janela no canto direito.
+
+---
+
 ## Sessão de 2026-09-27 (parte 10) — vídeo fora do lugar, resolvido de vez
 
 ### Pedido do usuário
