@@ -21,6 +21,16 @@ FetchContent_Declare(
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_GAMES    OFF CACHE BOOL "" FORCE)
 
+# Força OpenGL ES 2.0 em vez do padrão do Raylib pra PLATFORM_DESKTOP
+# (OpenGL 3.3 desktop). O alvo real é RK3229 (GPU Mali-400), que só fala
+# OpenGL ES — pedir GL 3.3 nele faz o GLFW/Raylib crashar (segfault) na
+# criação do contexto gráfico, confirmado testando de verdade num
+# RK322x real (ver docs/memory/known-issues.md). O app só usa desenho 2D
+# básico (retângulos, texto, textura) — não depende de nenhum recurso
+# exclusivo do GL 3.3 — então ES 2.0 funciona igual em qualquer GPU,
+# incluindo as desktop (AMD/Intel/NVIDIA) usadas em desenvolvimento.
+set(OPENGL_VERSION "ES 2.0" CACHE STRING "" FORCE)
+
 FetchContent_MakeAvailable(raylib)
 
 find_package(X11 REQUIRED)

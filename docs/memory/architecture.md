@@ -179,6 +179,11 @@ de ancoragem da janela principal não afeta o posicionamento do vídeo.
 - `CMakeLists.txt` é o build system canônico (já resolve a dependência do
   Raylib via `FetchContent`, que não costuma estar empacotado pra
   Armbian). Compila `apps/tvbox_esus_app.cpp` + tudo em `src/*.cpp`.
+- **Força `OPENGL_VERSION="ES 2.0"`** na configuração do Raylib (em vez
+  do padrão `GRAPHICS_API_OPENGL_33` que `PLATFORM=Desktop` usaria
+  sozinho). Testado num RK322x real: sem isso, o app crasha
+  (`Segmentation fault`) na criação do contexto gráfico, porque a Mali-400
+  do RK3229 não fala OpenGL desktop, só ES. Ver [[known-issues]] item 0.
 - `Makefile` é um atalho fino em cima do CMake (`make` = configure+build,
   `make run`, `make clean`) — mantido porque já existia no repo, mas não
   é mais um segundo pipeline de compilação C independente.

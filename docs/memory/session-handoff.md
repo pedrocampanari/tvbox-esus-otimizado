@@ -1,5 +1,53 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 12) — primeiro teste em hardware real: segfault de OpenGL
+
+### Contexto
+Pela primeira vez o usuário testou num **RK322x físico de verdade**
+(não mais só nesta sandbox x86_64), seguindo os passos de instalação
+(`install.sh`, `.xinitrc` + `exec.sh`). Vários problemas apareceram em
+sequência, cada um revelando o próximo depois de resolvido:
+
+1. `RandR headers not found` no build → `install.sh --build` só tinha
+   `libx11-dev`, faltava o resto dos headers X11 que o GLFW precisa.
+   Corrigido usando o metapacote `xorg-dev`.
+2. `GLFW Error 65550` rodando o binário direto → era
+   `GLFW_PLATFORM_UNAVAILABLE`, o binário rodando sem sessão X ativa.
+3. `.xinitrc` abrindo um xterm preto travado → arquivo sem `chmod +x`,
+   caindo no fallback padrão do `xinit`.
+4. Depois de corrigir o `.xinitrc`: segfault em loop. O log mostrou
+   `DISPLAY missing` — ainda sem sessão X de verdade (rodando fora do
+   `startx`).
+5. **Com `startx` de verdade rodando**: segfault de novo, mas dessa vez
+   com Xorg subindo normalmente. Essa foi a pista real.
+
+### Causa raiz final
+Raylib compilado com `GRAPHICS_API_OPENGL_33` (padrão pra
+`PLATFORM=Desktop`) — mas a GPU do RK3229 (Mali-400) só fala OpenGL ES.
+Pedir GL 3.3 numa GPU que não tem isso crasha na criação do contexto,
+antes até do nosso código rodar.
+
+### Correção
+`CMakeLists.txt`: `set(OPENGL_VERSION "ES 2.0" CACHE STRING "" FORCE)`
+antes do `FetchContent_MakeAvailable(raylib)`.
+
+### Verificado de verdade
+Rebuild limpo do zero nesta sandbox com a mudança: configure confirma
+`GRAPHICS=GRAPHICS_API_OPENGL_ES2`; app roda sem crash; screenshot
+mostra tudo renderizando normalmente (texto, cores, vídeo) — ES 2.0 não
+quebrou nada mesmo rodando em GPU desktop (AMD/Mesa) aqui. **Ainda não
+confirmado no RK322x real** (aguardando o usuário testar a versão
+atualizada) — mas a lógica (app só usa desenho 2D básico, sem recursos
+exclusivos de GL 3.3) dá confiança alta que vai funcionar lá também.
+
+### Melhorias operacionais feitas de passagem
+- `exec.sh` agora checa `$DISPLAY` antes de tentar rodar (falha rápido
+  e claro em vez de crash-loop confuso).
+- `exec.sh` desiste depois de 5 quedas rápidas seguidas (< 5s de vida
+  cada), evitando loop infinito silencioso.
+
+---
+
 ## Sessão de 2026-09-27 (parte 11) — ancoragem da janela: esquerda → direita
 
 ### Pedido do usuário

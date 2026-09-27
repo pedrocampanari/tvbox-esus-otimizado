@@ -1,5 +1,42 @@
 # Problemas e decisões em aberto conhecidas
 
+## 0. Segfault na inicialização em hardware real (RK3229) — RESOLVIDO em 2026-09-27
+**Primeiro teste de verdade num RK322x físico** (não mais só a sandbox
+de desenvolvimento x86_64): o app subia o X corretamente mas o binário
+crashava (`Segmentation fault`, código 139) toda vez, logo na
+inicialização.
+
+**Causa raiz**: o Raylib, sem forçar nada, usa `GRAPHICS_API_OPENGL_33`
+(OpenGL desktop 3.3) quando compilado com `PLATFORM=Desktop` — confirmado
+no próprio log de configure do CMake. A GPU do RK3229 é uma Mali-400,
+que só fala **OpenGL ES** (tipicamente ES 2.0), não OpenGL desktop.
+Pedir um contexto GL 3.3 numa GPU que não tem isso faz o GLFW/Raylib
+crashar na criação do contexto — o app nem chega a rodar uma linha do
+nosso código.
+
+**Correção**: `CMakeLists.txt` agora força
+`set(OPENGL_VERSION "ES 2.0" CACHE STRING "" FORCE)` antes do
+`FetchContent_MakeAvailable(raylib)`. O app só usa desenho 2D básico
+(retângulos, texto, textura) — nada que dependa de recursos exclusivos
+do GL 3.3 — então ES 2.0 funciona igual em qualquer GPU, incluindo as
+de desktop (testado: continua renderizando tudo certo na sandbox x86_64
+com Mesa/AMD depois da mudança).
+
+**Efeito colateral notado (não é bug nosso)**: quando o GLFW falha em
+inicializar (por qualquer motivo — `$DISPLAY` ausente, contexto GL
+incompatível, etc.), o Raylib crasha em vez de sair limpo com um erro.
+Isso é uma limitação do GLFW/Raylib upstream, não algo que dá pra
+corrigir do nosso lado sem recompilar o Raylib com patches próprios —
+por isso `exec.sh` agora falha rápido quando detecta `$DISPLAY` ausente
+(evita pelo menos esse caso específico de loop de crash confuso).
+
+**Se isso persistir mesmo com ES 2.0 forçado**: rodar `glxinfo | grep
+"OpenGL"` numa sessão X ativa no dispositivo (`DISPLAY=:0 glxinfo`) pra
+ver que driver/versão está realmente disponível — pode ser necessário
+ajustar `--hwdec` do mpv também (ver item 5) se o driver Mali usado for
+diferente do esperado (Panfrost vs. driver proprietário ARM, por
+exemplo).
+
 ## 1. Modo atual: lista fixa de vídeos — RESOLVIDO (10/10) em 2026-09-26
 O dono do sistema autorizou usar uma lista FIXA de links de vídeo por
 enquanto, em vez de ficar buscando `esustv.jfbatl.com.br/display` o
