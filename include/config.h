@@ -34,9 +34,16 @@ constexpr int kDefaultSlideDurationSeconds = 10;
 
 // Quanto tempo esperar o mpv confirmar playback real (via IPC, ver
 // include/player.h::IsVideoActuallyPlaying) antes de desistir e tratar
-// como falha — mesmo valor do timeout de carregamento de iframe do site
-// original (`h=8e3` no bundle JS, ver docs/memory/frontend-contract.md).
-constexpr int kVideoLoadTimeoutSeconds = 8;
+// como falha. NÃO é o mesmo caso do timeout de iframe do site original
+// (`h=8e3` no bundle JS) — aquele só media o carregamento de uma PÁGINA
+// já hospedada pelo YouTube; o nosso mpv precisa rodar o `yt-dlp`
+// (Python) pra resolver a URL do zero, o que no CPU fraco do RK3229
+// pode facilmente passar de 8s (confirmado: 8s causava timeout em TODO
+// vídeo no dispositivo real, deixando só o spinner aparecendo pra
+// sempre). 30s dá folga de verdade pro `yt-dlp` + buffering inicial
+// numa Cortex-A7 fraca sem travar a experiência por tempo demais numa
+// falha real.
+constexpr int kVideoLoadTimeoutSeconds = 30;
 
 // Fonte de conteúdo: por autorização do dono do sistema (2026-09-26),
 // v1 usa uma lista FIXA de campanhas/vídeos (config/campaigns.conf),

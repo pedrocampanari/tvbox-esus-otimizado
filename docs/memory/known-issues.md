@@ -1,5 +1,25 @@
 # Problemas e decisões em aberto conhecidas
 
+## -3. Timeout de loading do vídeo (8s) causava spinner infinito no RK3229 real — RESOLVIDO em 2026-09-27
+Primeiro teste no dispositivo real com a animação de loading (parte
+13): todo vídeo ficava preso no spinner, nunca chegava a tocar.
+
+**Causa**: copiei o valor de `kVideoLoadTimeoutSeconds = 8` do timeout
+de iframe do site original (`h=8e3` no bundle JS) sem reparar que é uma
+medida completamente diferente — lá é só o carregamento de uma PÁGINA
+já hospedada pelo YouTube; no nosso caso o `mpv` precisa rodar o
+`yt-dlp` (Python) do zero pra resolver a URL, o que no CPU fraco do
+RK3229 (quad-core Cortex-A7) facilmente passa de 8s. Resultado: todo
+vídeo desistia antes de confirmar, mostrando só spinner pra sempre (um
+slide desistindo e o próximo já entrando com spinner de novo — por
+isso parecia "infinito").
+
+**Correção**: `kVideoLoadTimeoutSeconds` subiu pra 30s
+(`include/config.h`). Ainda não testado no dispositivo real (aguardando
+confirmação do usuário) — se 30s ainda não for suficiente em algum
+vídeo específico, aumentar mais é seguro (só atrasa a desistência em
+caso de falha real, não afeta o caminho de sucesso).
+
 ## -2. Painel institucional nos outros 75% da tela (Chromium) — implementado, NÃO testado de ponta a ponta
 Pedido do usuário: preencher os 75% da tela que sobram (nosso app
 ocupa 25%, ancorado à direita) com
