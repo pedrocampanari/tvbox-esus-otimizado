@@ -1,5 +1,57 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 7) — "corrija os known-issues" (diagnóstico conclusivo do item 5)
+
+### Pedido do usuário
+"Corrija os known-issues" — mesmo pedido de antes, revisitado no dia
+seguinte.
+
+### O que fiz
+Revisei os 6 itens de [[known-issues]]. Itens 1, 3, 4 já estavam
+RESOLVIDO; itens 2 e 6 dependem da mesma decisão externa do dono do
+sistema (não é algo que eu deva resolver sozinho, ver item 2). O único
+item com trabalho real possível era o 5 (a lacuna de confirmação visual
+do vídeo embutido, deixada em aberto na sessão anterior).
+
+Investiguei mais a fundo em vez de só repetir o teste:
+- Rodei `mpv` sem `--wid` com log verboso: confirmei que ele escolhe
+  sozinho `vo=gpu` com contexto **Wayland nativo** quando não precisa
+  embutir em janela alheia — `--wid` (que `player.cpp` usa) força o
+  caminho X11, já que Wayland não tem conceito de "embutir por ID de
+  janela" (diferença de design deliberada).
+- Testei `--vo=xv` (técnica clássica de embedding, mais antiga que
+  `vo=gpu`) contra a janela real do nosso app: decodifica com sucesso
+  (`Using hardware decoding (vaapi-copy)`, progresso de tempo normal),
+  mas a captura continua preta — igual ao padrão.
+- Capturei com `xwd` (protocolo X11 puro, não passa por nenhuma
+  ferramenta/portal do Wayland) além do `import` de antes: também
+  preto.
+- **Evidência decisiva**: a janela principal do Raylib (também OpenGL)
+  apareceu correta em TODOS os screenshots da sessão inteira (dezenas).
+  Só a segunda janela top-level `override-redirect` (nosso embedding de
+  vídeo) fica preta, com qualquer VO, com qualquer ferramenta de
+  captura. Isso isola definitivamente o problema: é como o **mutter**
+  (compositor do GNOME/Wayland) lida com uma segunda janela X11
+  `override-redirect` de um cliente Xlib cru — não é falta de GPU, não
+  é bug no nosso código, não é o VO escolhido.
+
+### Conclusão
+known-issues.md item 5 atualizado com esse diagnóstico bem mais sólido
+(antes era "hipótese, não confirmada 100%"; agora é uma cadeia de
+evidência que isola a causa com confiança alta). **Não mudei código**
+— não há evidência de que qualquer VO específico funcione melhor no
+Xorg real, e a lógica downstream do `--wid` (spawn, argumentos,
+janela) já está validada. Deixei uma dica de troubleshooting
+documentada (tentar `--vo=xv` no dispositivo real se a imagem não
+aparecer) sem forçar isso como padrão sem evidência.
+
+### Nada mais ficou pendente de correção nesta passada
+Itens 2 e 6 continuam bloqueados pela mesma decisão externa (fonte de
+dados dinâmica) que já está documentada e não é minha pra decidir
+sozinho.
+
+---
+
 ## Sessão de 2026-09-26 (parte 6) — mpv/yt-dlp instalados, teste real
 
 ### Pedido do usuário

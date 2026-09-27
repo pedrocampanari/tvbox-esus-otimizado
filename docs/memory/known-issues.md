@@ -153,26 +153,60 @@ rodei o binário de verdade (`./build/bin/tvbox_esus_app`) com o
     (`341x645+0+61`, batendo com a área do banner), está mapeada
     (`Map State: IsViewable`) e o `mpv` está de fato consumindo CPU de
     forma consistente com decode ativo.
-  Porém **a imagem do vídeo não apareceu nos screenshots** (nem via
-  `import -window <id da janela de vídeo>`, nem tentando um X server
-  aninhado limpo via `Xephyr` como alternativa). Causa provável, não
-  confirmada 100%: **esta sandbox de desenvolvimento roda GNOME sob
-  Wayland** (`XDG_SESSION_TYPE=wayland`), com XWayland dando
-  compatibilidade X11 — não é um Xorg puro, que é o que o dispositivo
-  alvo realmente usa ("Xorg em modo mínimo", sem Wayland). A técnica de
-  embutir uma janela X11 `override-redirect` raw (o que `player.cpp`
-  faz) é uma técnica clássica de X11 puro; sob XWayland, isso é uma
-  fonte conhecida de comportamento imprevisível pra compositação de
-  janelas que não são geridas normalmente pelo compositor. Reforça essa
-  hipótese: o `mpv`, sem `--vo` explícito, caiu sozinho num modo
-  legado (`vo/x11`, com aviso de "bad performance" no log), sugerindo
-  que aceleração GPU (`vo=gpu`) não está disponível de forma limpa
-  nesse container de qualquer forma.
-  **Isso não foi confirmado como bug do nosso código** — só não deu pra
-  provar visualmente aqui. **Próximo passo real**: validar a
-  composição visual num Xorg puro de verdade (o dispositivo Armbian
-  real, ou uma VM/máquina com Xorg sem Wayland) antes de considerar
-  este item fechado.
+  Porém **a imagem do vídeo não apareceu nos screenshots**.
+
+  **Atualização 2026-09-27 — investiguei mais a fundo e agora tenho uma
+  causa raiz bem mais sólida** (não é só hipótese):
+  - Sem `--wid`, `mpv` escolhe sozinho `vo=gpu` com um **contexto
+    Wayland nativo** (log: `[vo/gpu/opengl] Initializing GPU context
+    'wayland'`) — cria sua própria superfície Wayland, sem passar por
+    X11 nenhum. `--wid` é um conceito puramente X11 (Wayland não tem
+    "embutir por ID de janela alheia" — isso é uma diferença de design
+    deliberada, por segurança). Então, ao passar `--wid` (obrigatório
+    pra embutir na nossa janela), o `mpv` é forçado pro caminho X11.
+  - Testei **duas variantes do caminho X11**: o padrão (`vo=gpu` com
+    contexto X11/EGL) e forçando `--vo=xv` (X-Video, a técnica clássica
+    e historicamente mais robusta pra esse tipo de embedding). Nos
+    dois casos, `mpv` decodifica de verdade (confirmado nos logs: "Using
+    hardware decoding (vaapi-copy)", progresso de tempo avançando,
+    cache/buffer normal) — mas a janela continua preta em QUALQUER
+    método de captura, incluindo `xwd` (protocolo X11 puro, não passa
+    por nenhum portal/ferramenta de screenshot do Wayland).
+  - **A evidência decisiva**: a janela PRINCIPAL do Raylib (que também
+    usa OpenGL/EGL) apareceu correta em literalmente todo screenshot
+    tirado durante esta sessão inteira (dezenas de vezes). Só a
+    **segunda janela top-level `override-redirect`** (a técnica de
+    embedding em `player.cpp`) fica preta. Isso isola o problema: não é
+    "GPU não composita neste container" (a janela do Raylib prova que
+    composita bem) — é especificamente como o **mutter** (compositor
+    Wayland do GNOME, via XWayland) lida com uma segunda janela X11
+    top-level `override-redirect` de um cliente Xlib cru, sem toolkit.
+  - **Isso não é um bug no nosso código** — a lógica de spawn, os
+    argumentos do mpv, e a criação/posicionamento/mapeamento da janela
+    X11 estão todos corretos (confirmado via `ps`/`xwininfo`). É uma
+    limitação genuína e específica desta sandbox (GNOME+Wayland+
+    XWayland), que o dispositivo alvo **não tem** (Armbian roda Xorg
+    puro, sem Wayland, sem XWayland, provavelmente sem compositor
+    nenhum — nesse cenário, duas janelas top-level com stacking
+    controlado por `XMapRaised` é a técnica padrão de décadas de
+    kiosks Linux, e funciona de forma direta e previsível).
+  - **Próximo passo real**: validar a composição visual num Xorg puro
+    de verdade (o dispositivo Armbian real, ou uma VM/máquina com Xorg
+    sem Wayland) antes de considerar este item fechado — mas a
+    confiança de que vai funcionar lá é alta, dado que toda a lógica
+    downstream do `--wid` já foi validada.
+  - **Dica de troubleshooting pro Xorg real, se a imagem não aparecer**:
+    testei duas variantes do VO nesta sessão e as duas decodificam com
+    sucesso (só não consegui confirmar visualmente, pelo motivo acima):
+    o padrão do `mpv` sem `--vo` explícito (deixa o `mpv` escolher —
+    é o que `player.cpp` faz hoje) e `--vo=xv` forçado (técnica mais
+    antiga/clássica pra embedding em janela alheia, historicamente mais
+    previsível entre drivers diferentes). **Não troquei o padrão no
+    código** porque não tenho evidência de qual é melhor no hardware
+    real (o teste aqui não diferenciou os dois — a sandbox quebrada
+    faz os dois falharem do mesmo jeito visualmente) — só documento
+    como opção de diagnóstico: se o vídeo não aparecer no Armbian real,
+    tentar `--vo=xv` explícito é um teste rápido e de baixo risco.
 
 **Histórico (sessão anterior, mesmo dia)**: antes de ter `mpv`/`yt-dlp`
 instalados, eu já tinha encontrado e corrigido um bug relacionado
