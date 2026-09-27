@@ -128,6 +128,7 @@ int main() {
     CampaignType activeType = CampaignType::Texto;
     Texture2D imageTexture{};
     std::string imageTextureUrl;
+    bool videoConfirmedStarted = false;
 
     while (g_running.load() && !WindowShouldClose()) {
         std::vector<Campaign> snapshot;
@@ -147,6 +148,7 @@ int main() {
             activeId = active.id;
             activeType = active.tipo;
             slideStartTime = GetTime();
+            videoConfirmedStarted = false;
 
             if (activeType == CampaignType::Video && playerReady) {
                 if (!player.Play(active)) {
@@ -162,6 +164,28 @@ int main() {
                 if (imageTexture.id != 0) UnloadTexture(imageTexture);
                 imageTexture = DownloadImageTexture(active.imagem_url);
                 imageTextureUrl = active.imagem_url;
+            }
+        }
+
+        // Sem `playerReady` não tem o que esperar (nenhum vídeo vai
+        // tocar de qualquer forma) — trata como "pronto" e deixa o
+        // placeholder normal + o cronômetro de duração seguirem sozinhos,
+        // igual o comportamento de antes desta animação de carregamento
+        // existir. Com o player disponível, só considera pronto quando o
+        // mpv confirmar via IPC que já está de fato decodificando —
+        // enquanto isso, mostra o spinner. Se demorar demais (mesmo
+        // timeout do carregamento de iframe do site original), desiste e
+        // avança, igual o onFalha de lá.
+        bool videoReady = !playerReady;
+        if (activeType == CampaignType::Video && playerReady) {
+            if (videoConfirmedStarted) {
+                videoReady = true;
+            } else if (player.IsVideoActuallyPlaying()) {
+                videoConfirmedStarted = true;
+                videoReady = true;
+            } else if (GetTime() - slideStartTime >= kVideoLoadTimeoutSeconds) {
+                player.Stop();
+                slideStartTime = GetTime() - durationSeconds;
             }
         }
 
@@ -202,7 +226,11 @@ int main() {
                 DrawImageSlide(bannerRect, imageTexture);
                 break;
             case CampaignType::Video:
-                DrawVideoPlaceholder(bannerRect);
+                if (videoReady) {
+                    DrawVideoPlaceholder(bannerRect);
+                } else {
+                    DrawLoadingSlide(bannerRect, active, static_cast<float>(GetTime()));
+                }
                 break;
         }
         EndDrawing();

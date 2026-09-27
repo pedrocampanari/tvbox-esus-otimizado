@@ -59,7 +59,11 @@ public:
     void SetGeometry(int x, int y, int width, int height);
 
     // Começa a tocar a campanha de vídeo informada. Mata qualquer
-    // reprodução anterior antes de iniciar a nova.
+    // reprodução anterior antes de iniciar a nova. A janela de vídeo
+    // fica ESCONDIDA até a primeira confirmação real de playback via
+    // `IsVideoActuallyPlaying()` — enquanto isso, quem chamou deve
+    // desenhar uma animação de carregamento por cima (ver
+    // include/ui.h::DrawLoadingSlide).
     bool Play(const Campaign &campaign);
 
     // Esconde a janela de vídeo e mata o processo mpv, se houver.
@@ -67,14 +71,31 @@ public:
 
     bool IsPlaying() const;
 
+    // Pergunta ao mpv (via seu socket IPC JSON) se ele já está de fato
+    // decodificando/tocando (não só resolvendo a URL ou bufferizando).
+    // Retorna `false` até a primeira confirmação; a partir daí sempre
+    // `true` (até o próximo `Play()`/`Stop()`), e nesse instante exato a
+    // janela de vídeo é mapeada/exibida pela primeira vez — antes disso
+    // ela fica escondida, pra dar tempo da animação de carregamento
+    // (desenhada por fora, no Raylib) aparecer sem um quadro preto do
+    // mpv por cima. Chamar isso todo frame enquanto o slide de vídeo
+    // estiver ativo e ainda não confirmado.
+    bool IsVideoActuallyPlaying();
+
 private:
     Display *display_ = nullptr;
     Window videoWindow_ = 0;
     pid_t mpvPid_ = -1;
 
+    int ipcSocketFd_ = -1;
+    std::string ipcSocketPath_;
+    bool videoConfirmedPlaying_ = false;
+
     // Valida a URL da campanha (trata "TODO"/vazio) e a repassa como
     // está — o mpv que resolve internamente se não for um arquivo direto.
     std::string ResolveStreamUrl(const Campaign &campaign) const;
+
+    void CloseIpcSocket();
 };
 
 } // namespace kiosk

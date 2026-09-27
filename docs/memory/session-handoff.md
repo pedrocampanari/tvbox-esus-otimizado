@@ -1,5 +1,50 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 13) — animação de loading nos vídeos
+
+### Pedido do usuário
+"gostaria que colocasse uma animação de loading enquanto carregasse os
+vídeos. Esses vídeos estão em loop tbm?" — confirmei que sim (`mpv
+--loop-file=inf`, quem controla a troca de slide é `duracao_segundos`,
+não a duração do vídeo) e implementei o loading.
+
+### O que fiz
+- `include/player.h`/`src/player.cpp`: `Play()` não mapeia mais a
+  janela de vídeo na hora — fica escondida até `IsVideoActuallyPlaying()`
+  confirmar via socket IPC JSON do próprio mpv (`--input-ipc-server`,
+  propriedade `time-pos` não-nula) que ele já está de fato tocando, não
+  só resolvendo a URL. Nesse instante exato, a função mapeia a janela
+  sozinha (efeito colateral encapsulado — quem chama só pergunta "já
+  tá pronto?").
+- `include/ui.h`/`src/ui.cpp`: `DrawLoadingSlide` — título/subtítulo da
+  campanha + spinner animado (`DrawRing` girando via `GetTime()`).
+- `apps/tvbox_esus_app.cpp`: enquanto o vídeo não confirma, desenha o
+  loading em vez do placeholder; se não confirmar dentro de
+  `kVideoLoadTimeoutSeconds` (8s, `config.h` — mesmo valor do timeout de
+  iframe do site original), desiste e avança o slide (mesmo
+  comportamento do `onFalha` original).
+
+### Verificado de verdade (não só compilou)
+- Rodei o app do zero: capturei o spinner aparecendo com o título certo
+  logo de cara, girando em frames diferentes.
+- Presenciei o caminho de TIMEOUT funcionando de verdade: um slide não
+  confirmou a tempo (mais de 8s), o app desistiu sozinho e avançou pro
+  próximo — que também mostrou seu próprio spinner.
+- Confirmei a transição spinner → vídeo real: depois de mais alguns
+  segundos, screenshot mostrou o vídeo de verdade tocando (campanha
+  "VOCÊ SABIA?").
+- **Investiguei um falso alarme**: em alguns screenshots o vídeo
+  aparecia preto ou até mostrando só o fundo neutro sem nada — não era
+  bug novo, era a mesma flakiness de captura que já é limitação
+  conhecida (retirei o mesmo frame de novo e apareceu certo). Testei
+  `time-pos` contra outras propriedades do mpv (`core-idle`, `pause`,
+  `paused-for-cache`) via um script Python de sondagem — todas
+  concordam entre si, não achei sinal mais preciso sem implementar
+  leitura de eventos (`playback-restart`), o que ficou fora de escopo
+  por ora (documentado como limitação aceitável em known-issues).
+
+---
+
 ## Sessão de 2026-09-27 (parte 12) — primeiro teste em hardware real: segfault de OpenGL
 
 ### Contexto

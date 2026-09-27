@@ -34,6 +34,14 @@ void DrawImageSlide(Rectangle area, Texture2D texture);
 // X11 sobreposta — ver include/player.h).
 void DrawVideoPlaceholder(Rectangle area);
 
+// Desenha título/subtítulo da campanha + um spinner animado, usado
+// enquanto o vídeo ainda está resolvendo a URL/bufferizando (o mpv
+// ainda não confirmou playback real — ver
+// include/player.h::IsVideoActuallyPlaying). `elapsedSeconds` é só pra
+// animar o spinner (ex.: `GetTime()`), não precisa ser um cronômetro
+// próprio.
+void DrawLoadingSlide(Rectangle area, const Campaign &campaign, float elapsedSeconds);
+
 } // namespace kiosk
 
 #endif // TVBOX_UI_H

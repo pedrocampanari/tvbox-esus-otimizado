@@ -32,6 +32,12 @@ constexpr int kFetchTimeoutSeconds = 10;
 // do app original: usa 10s se duracao_segundos <= 0).
 constexpr int kDefaultSlideDurationSeconds = 10;
 
+// Quanto tempo esperar o mpv confirmar playback real (via IPC, ver
+// include/player.h::IsVideoActuallyPlaying) antes de desistir e tratar
+// como falha — mesmo valor do timeout de carregamento de iframe do site
+// original (`h=8e3` no bundle JS, ver docs/memory/frontend-contract.md).
+constexpr int kVideoLoadTimeoutSeconds = 8;
+
 // Fonte de conteúdo: por autorização do dono do sistema (2026-09-26),
 // v1 usa uma lista FIXA de campanhas/vídeos (config/campaigns.conf),
 // carregada uma única vez na inicialização — sem ficar buscando a URL

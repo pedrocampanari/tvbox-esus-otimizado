@@ -1,6 +1,7 @@
 #include "ui.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <sstream>
 #include <vector>
@@ -221,6 +222,48 @@ void DrawVideoPlaceholder(Rectangle area) {
     // O mpv desenha por cima desta área via a janela X11 dedicada; isto
     // só evita um "flash" de outra cor por baixo antes do mpv subir.
     DrawRectangleRec(area, kColorMediaBackground);
+}
+
+void DrawLoadingSlide(Rectangle area, const Campaign &campaign, float elapsedSeconds) {
+    DrawRectangleRec(area, kColorMediaBackground);
+
+    float centerX = area.x + area.width / 2.0f;
+    float padding = area.width * 0.08f;
+    float maxTextWidth = area.width - 2 * padding;
+    float y = area.y + area.height * 0.12f;
+
+    if (!campaign.titulo.empty()) {
+        float titleSize = Clamp(18.0f, 0.09f, 40.0f, area.width);
+        for (const auto &line : WrapText(BoldFont(), campaign.titulo, titleSize, maxTextWidth)) {
+            DrawCenteredText(BoldFont(), line.c_str(), titleSize, kColorTextFg, centerX, y);
+            y += titleSize * 1.2f;
+        }
+        y += titleSize * 0.15f;
+    }
+
+    if (!campaign.subtitulo.empty()) {
+        float subSize = Clamp(12.0f, 0.06f, 26.0f, area.width);
+        for (const auto &line : WrapText(RegularFont(), campaign.subtitulo, subSize, maxTextWidth)) {
+            DrawCenteredText(RegularFont(), line.c_str(), subSize, kColorTextAccent, centerX, y);
+            y += subSize * 1.25f;
+        }
+    }
+
+    // Spinner: arco de 270° girando continuamente, mesma ideia do
+    // indicador de carregamento do site original enquanto resolve o
+    // embed de vídeo. Usa o espaço restante entre o texto e o rodapé
+    // da área do banner.
+    float spaceBelow = (area.y + area.height) - y;
+    float spinnerRadius = std::clamp(std::min(area.width, spaceBelow) * 0.18f, 14.0f, 40.0f);
+    float spinnerCenterY = y + spaceBelow / 2.0f;
+    if (spinnerCenterY + spinnerRadius > area.y + area.height) {
+        spinnerCenterY = area.y + area.height - spinnerRadius - 8.0f;
+    }
+
+    float startAngle = std::fmod(elapsedSeconds * 220.0f, 360.0f);
+    float endAngle = startAngle + 270.0f;
+    DrawRing({centerX, spinnerCenterY}, spinnerRadius * 0.7f, spinnerRadius, startAngle, endAngle,
+             32, kColorTextAccent);
 }
 
 } // namespace kiosk

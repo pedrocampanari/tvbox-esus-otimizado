@@ -117,6 +117,13 @@ problema real no hardware (ver [[known-issues]]).
      separado, conexão X11 própria) tenta anexar numa janela que o
      servidor X ainda não terminou de criar/mapear (mais provável
      quando o primeiro slide já é vídeo). Ver [[known-issues]] item 5.
+  6. **A janela de vídeo só é mapeada quando `IsVideoActuallyPlaying()`
+     confirma** (via socket IPC JSON do mpv, `--input-ipc-server` +
+     propriedade `time-pos`) que o mpv já está de fato tocando, não só
+     resolvendo/bufferizando. Enquanto isso, `apps/tvbox_esus_app.cpp`
+     desenha `DrawLoadingSlide` (spinner + título/subtítulo). Timeout de
+     `kVideoLoadTimeoutSeconds` (config.h) — se não confirmar a tempo,
+     desiste e avança o slide. Ver [[known-issues]] item -1.
 - `include/ui.h` / `src/ui.cpp` — desenho Raylib do chrome (header/footer,
   cada um com título+subtítulo, cores diferentes entre si — header azul,
   footer vermelho) e dos slides de texto/imagem, usando exatamente a

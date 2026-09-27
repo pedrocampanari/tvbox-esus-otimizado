@@ -1,6 +1,40 @@
 # Problemas e decisões em aberto conhecidas
 
-## 0. Segfault na inicialização em hardware real (RK3229) — RESOLVIDO em 2026-09-27
+## -1. Animação de carregamento nos slides de vídeo — implementado em 2026-09-27
+Pedido do usuário: mostrar algo enquanto o vídeo ainda está
+resolvendo/bufferizando, em vez de tela preta/cor neutra parada.
+
+**Como funciona**: `VideoPlayer::Play()` não mapeia mais a janela de
+vídeo imediatamente — ela só é revelada quando
+`IsVideoActuallyPlaying()` confirma via **IPC JSON do próprio mpv**
+(`--input-ipc-server`, protocolo documentado e estável) que a
+propriedade `time-pos` já não é nula (ou seja, o mpv já está de fato
+posicionado num tempo de playback, não só resolvendo a URL via
+`ytdl_hook`). Enquanto isso não acontece, `apps/tvbox_esus_app.cpp`
+desenha `DrawLoadingSlide` (título + subtítulo da campanha + um spinner
+animado, `src/ui.cpp`) em vez do placeholder neutro. Se isso não
+acontecer dentro de `kVideoLoadTimeoutSeconds` (8s, mesmo valor do
+timeout de iframe do site original), desiste e avança o slide — mesmo
+comportamento de falha (`onFalha`) que o app original tinha pra
+embeds externos.
+
+**Testado de verdade**: rodei o app do zero e confirmei por screenshot
+o spinner aparecendo com o título certo logo na inicialização, girando
+(frames diferentes capturados), e a transição pro vídeo real depois de
+confirmado. Também presenciei o caminho de timeout funcionando de
+verdade (um slide não confirmou a tempo, o app desistiu e avançou pro
+próximo sozinho — mesmo comportamento do `onFalha` original).
+
+**Limitação conhecida, não é bug**: `time-pos` não-nulo é um sinal
+"bom o suficiente" mas não perfeito — pode ficar não-nulo uma fração de
+segundo antes do primeiro quadro realmente aparecer na tela (testei
+outras propriedades do mpv — `core-idle`, `pause`, `paused-for-cache`
+— e todas ficam consistentes com "tocando" ao mesmo tempo que
+`time-pos`, sem sinal mais preciso disponível sem assinar eventos como
+`playback-restart`, que exigiria um cliente IPC mais completo). Na
+prática isso significa, na pior hipótese, um instante muito curto de
+tela neutra entre o spinner sumir e o vídeo aparecer — bem melhor do
+que a alternativa (tela parada por toda a duração do carregamento).
 **Primeiro teste de verdade num RK322x físico** (não mais só a sandbox
 de desenvolvimento x86_64): o app subia o X corretamente mas o binário
 crashava (`Segmentation fault`, código 139) toda vez, logo na
