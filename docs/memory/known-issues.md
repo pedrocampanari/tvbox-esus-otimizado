@@ -1,5 +1,84 @@
 # Problemas e decisões em aberto conhecidas
 
+## -6. Controle remoto IR do hardware não fazia nada — RESOLVIDO em 2026-09-27 (POWER/VOL+/VOL-/MUTE confirmados no dispositivo real)
+Pedido do usuário: "preciso reabilitar o controle remoto que veio com o
+hardware". Não é regressão nossa — o Armbian genérico nunca tinha esse
+suporte configurado (o firmware Android original do box trazia isso
+pronto, mas fora do escopo desta imagem).
+
+**Diagnóstico, feito ao vivo no RK3229 real via `dmesg`/`ir-keytable`**:
+o receptor IR já é reconhecido pelo kernel de fábrica — driver
+`gpio_ir_recv` carrega sozinho, registra `rc0`
+(`/devices/platform/ir-receiver/rc/rc0`), decodificador NEC ligado. Só
+que `ir-keytable -t` mostrava os eventos chegando como
+`EV_MSC(scancode)` + `EV_SYN`, **nunca `EV_KEY`** — ou seja, o kernel
+decodifica o sinal (protocolo `necx`, scancodes limpos e repetição
+correta) mas não existe **keymap** (tradução scancode→tecla) carregado,
+então nenhuma tecla chega em lugar nenhum. O próprio driver já reporta
+esperar um keymap chamado `rc-rk322x-tvbox` (visível em `ir-keytable`,
+campo "Default keymap"), mas esse arquivo não existe nesta imagem
+Armbian — é específico do firmware Android original.
+
+**Scancodes capturados e confirmados ao vivo** (`ir-keytable -t`,
+apertando cada botão do controle físico desta unidade, na ordem
+confirmada pelo usuário):
+- POWER → `0x50540`
+- VOL+ → `0x5054c`
+- VOL- → `0x50541`
+- MUTE → `0x50518`
+
+**Decisão do usuário sobre o botão POWER** (pergunta feita
+explicitamente, não assumida): desligamento real do sistema
+(`systemctl`/`poweroff`), não DPMS/standby nem suspend — suspend em
+boards RK3229/Armbian é historicamente instável (pode não voltar
+sozinho) e por isso foi descartado sem implementar. Religar depois de
+um poweroff é só tirar/recolocar da tomada — mesmo fluxo que o kiosk já
+usa pra ligar (ver README, "ao ligar na tomada, aparece a execução do
+binário").
+
+**Fix aplicado, tudo em `install.sh`** (nada mudou no binário C++ — o
+controle remoto não navega slides, só liga/desliga e mexe no volume,
+então fica inteiramente no nível de sistema):
+1. Keymap gravado em `/etc/rc_keymaps/rc-rk322x-tvbox.toml` com os 4
+   scancodes acima.
+2. Regra `udev` própria (`/etc/udev/rules.d/99-tvbox-ir-remote.rules`)
+   que roda `ir-keytable -a <keymap> -s $kernel` toda vez que uma
+   interface `rc*` aparece — **decisão deliberada de não confiar no
+   casamento automático do `/etc/rc_maps.cfg`** do pacote `ir-keytable`
+   (mesmo padrão de preferir determinismo sobre autodetecção que já
+   usamos pro `--gpu-context=x11egl` do mpv, ver item 5 abaixo).
+3. `triggerhappy` (daemon leve, sem X, sem desktop) convertendo as
+   teclas em ações: `KEY_POWER` → `/usr/sbin/poweroff`; `KEY_VOLUMEUP`/
+   `KEY_VOLUMEDOWN`/`KEY_MUTE` → script `/usr/local/bin/tvbox-volume`
+   (instalado pelo próprio `install.sh`) que **detecta em runtime** o
+   primeiro mixer ALSA disponível via `amixer scontrols`, em vez de
+   assumir um nome fixo tipo "Master" — necessário porque a saída de
+   áudio deste hardware é via HDMI (`snd_soc_hdmi_codec`) e o nome do
+   controle varia por board; se não houver mixer nenhum (comum em
+   HDMI puro, onde a própria TV controla o volume), o script loga e sai
+   sem erro em vez de quebrar.
+
+**Verificado de fato no dispositivo real** (não só "deveria
+funcionar"): usuário rodou `ir-keytable -t` antes e depois — antes, só
+`EV_MSC`/`EV_SYN`; os 4 scancodes de POWER/VOL+/VOL-/MUTE foram
+capturados e confirmados nominalmente pelo usuário na ordem que
+apertou. `install.sh` com as novas seções foi validado com `bash -n`
+(sintaxe), mas a aplicação de ponta a ponta (keymap carregando via
+`udev` + `triggerhappy` disparando `poweroff`/`amixer` de verdade ao
+apertar o controle) **ainda não foi testada após o `git pull` +
+`./install.sh`** — pedido pro usuário rodar de novo no dispositivo e
+confirmar. Testar `poweroff` de propósito desliga o aparelho de
+verdade, então não foi acionado remotamente durante o diagnóstico.
+
+**O que ficou fora do escopo, documentado mas não implementado**: os
+outros botões do controle (setas, OK, voltar, números) foram
+capturados no log bruto mas não mapeados — o usuário optou por só
+POWER e VOL+/VOL-/MUTE por ora. Se no futuro o app ganhar navegação
+manual de slides (hoje é 100% automático por `duracao_segundos`, ver
+[[architecture]]), esses scancodes extras já estão registrados na
+sessão e podem ser adicionados ao mesmo `.toml` sem precisar recapturar
+nada.
+
 ## -5. Vídeo ficava preto pra sempre SÓ no RK3229 real, depois da animação de loading ser adicionada — RESOLVIDO em 2026-09-27 (correção teórica; aguardando confirmação no hardware real)
 Usuário confirmou o regressivo mais direto desta sessão toda: "Mas
 estava funcionando, foi depois de adicionar o loading" — ou seja, o

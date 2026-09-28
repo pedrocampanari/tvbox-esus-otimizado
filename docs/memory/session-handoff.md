@@ -1,5 +1,70 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 19) — controle remoto IR: keymap + triggerhappy
+
+### Pedido do usuário
+"preciso reabilitar o controle remoto que veio com o hardware, como eu
+faco" — sem contexto prévio nenhum sobre isso nos memory docs (tema
+novo, não regressão).
+
+### Investigação (feita junto com o usuário, ao vivo no RK3229 real)
+Pedi pra rodar `dmesg | grep -iE 'ir-recv|rc[0-9]|nec...'` primeiro:
+mostrou que o receptor (`gpio_ir_recv`) e o decodificador NEC já
+carregam sozinhos, `rc0` registrado — hardware/kernel ok de cara. Pedi
+`ir-keytable -t` apertando o controle: os scancodes decodificavam
+perfeitamente (protocolo `necx`), mas só geravam `EV_MSC`+`EV_SYN`,
+nunca `EV_KEY` — diagnóstico fechado: falta keymap, não é problema de
+hardware nem de protocolo.
+
+Pedi uma segunda captura apertando todos os botões em ordem (POWER,
+VOL+, VOL-, MUTE, menu, setas, voltar, números) pra ter o log completo;
+vieram 19 scancodes únicos. Não assumi a correspondência scancode↔botão
+mesmo tendo pedido a ordem — pedi confirmação explícita dos 4 que
+importavam de verdade (usuário respondeu "1, 2, 3, 4", confirmando
+exatamente a ordem pedida: POWER=`0x50540`, VOL+=`0x5054c`,
+VOL-=`0x50541`, MUTE=`0x50518`).
+
+### Decisão de produto que não tomei sozinho
+Perguntei explicitamente o que o botão POWER deveria fazer (DPMS
+standby / suspend / poweroff real) — as três têm consequências bem
+diferentes num kiosk público, e suspend em Armbian/RK3229 é conhecido
+por não ser confiável. Usuário escolheu **poweroff real**
+(`systemctl`/`/usr/sbin/poweroff`), aceitando que religar é só
+tirar/recolocar da tomada (mesmo fluxo que o kiosk já usa pra ligar).
+
+### O que fiz
+Tudo em `install.sh` (nada no binário C++ — controle remoto aqui é
+liga/desliga + volume, não navegação de UI):
+- `/etc/rc_keymaps/rc-rk322x-tvbox.toml` com os 4 scancodes confirmados.
+- Regra `udev` própria (`99-tvbox-ir-remote.rules`) carregando esse
+  keymap de forma determinística ao detectar `rc*` — decisão deliberada
+  de não confiar no casamento automático do `rc_maps.cfg` do pacote
+  `ir-keytable` (mesmo padrão do `--gpu-context=x11egl`, ver
+  [[known-issues]] item 5).
+- `triggerhappy` instalado/habilitado, com trigger file mapeando
+  `KEY_POWER`→`poweroff`, `KEY_VOLUMEUP`/`KEY_VOLUMEDOWN`/`KEY_MUTE`→
+  script novo `/usr/local/bin/tvbox-volume` (também escrito pelo
+  `install.sh`) que detecta o mixer ALSA disponível em runtime em vez
+  de assumir "Master" fixo (áudio deste hardware é via HDMI,
+  `snd_soc_hdmi_codec` — nome de controle varia, e alguns setups não
+  têm volume por software nenhum; o script sai calado nesse caso).
+- Pacotes novos em `install.sh`: `ir-keytable`, `triggerhappy`,
+  `alsa-utils`.
+- Bloco de verificação no fim do `install.sh` checando `/sys/class/
+  rc/rc0` e status do `triggerhappy`.
+
+### Verificado de fato / o que falta
+`bash -n install.sh` passou (sintaxe). Os 4 scancodes foram confirmados
+nominalmente pelo usuário no dispositivo real. **O que NÃO testei**:
+rodar o `install.sh` atualizado de ponta a ponta no dispositivo e
+confirmar que apertar POWER desliga de verdade e VOL+/-/MUTE mexem no
+áudio — não acionei `poweroff` remotamente durante o diagnóstico (é
+destrutivo pro teste, desligaria o aparelho de verdade). Pedido pro
+usuário: `git pull` + `./install.sh` de novo + reteste físico dos 4
+botões. Detalhe completo em [[known-issues]] item -6.
+
+---
+
 ## Sessão de 2026-09-27 (parte 18) — vídeo preto no RK3229 real: trocado `time-pos` por `playback-restart`
 
 ### Contexto

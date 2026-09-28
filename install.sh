@@ -50,7 +50,10 @@ $SUDO apt install -y \
   curl \
   python3 \
   python3-pip \
-  chromium
+  chromium \
+  ir-keytable \
+  triggerhappy \
+  alsa-utils
 
 if [ "$WITH_BUILD_DEPS" = true ]; then
   # xorg-dev: metapacote oficial que o próprio GLFW recomenda pra
@@ -89,6 +92,85 @@ for policy_dir in /etc/chromium/policies/managed /etc/chromium-browser/policies/
 JSON
 done
 
+# Controle remoto IR que vem com o hardware (receptor gpio_ir_recv, já
+# reconhecido pelo kernel/device-tree do RK3229 — confirmado via `dmesg`
+# e `ir-keytable -t` num dispositivo real). O que falta não é hardware
+# nem decodificação (o protocolo `necx` já decodifica os scancodes
+# perfeitamente), é o KEYMAP: sem ele o kernel só emite EV_MSC(scancode),
+# nunca EV_KEY, então nenhuma tecla chega em lugar nenhum. Scancodes
+# abaixo capturados e confirmados ao vivo (`ir-keytable -t`) num
+# controle real desta unidade — ver docs/memory/known-issues.md.
+log "Gravando keymap do controle remoto IR (POWER/VOL+/VOL-/MUTE)"
+$SUDO mkdir -p /etc/rc_keymaps
+$SUDO tee /etc/rc_keymaps/rc-rk322x-tvbox.toml > /dev/null <<'TOML'
+[[protocols]]
+name = "rc-rk322x-tvbox"
+protocol = "necx"
+[[protocols.scancodes]]
+scancode = "0x50540"
+keycode = "KEY_POWER"
+[[protocols.scancodes]]
+scancode = "0x5054c"
+keycode = "KEY_VOLUMEUP"
+[[protocols.scancodes]]
+scancode = "0x50541"
+keycode = "KEY_VOLUMEDOWN"
+[[protocols.scancodes]]
+scancode = "0x50518"
+keycode = "KEY_MUTE"
+TOML
+
+# Regra própria em vez de confiar no casamento automático do
+# /etc/rc_maps.cfg do pacote ir-keytable: mesmo padrão de decisão que já
+# usamos pro --gpu-context=x11egl do mpv (determinístico > autodetecção).
+# Dispara toda vez que a interface rc0 aparece (boot ou hot-plug) e
+# aplica o keymap acima explicitamente, sem depender do driver reportar
+# o "Default keymap" certo nem do formato do rc_maps.cfg da distro.
+log "Instalando regra udev para carregar o keymap ao detectar o receptor IR"
+$SUDO tee /etc/udev/rules.d/99-tvbox-ir-remote.rules > /dev/null <<'UDEV'
+ACTION=="add", SUBSYSTEM=="rc", KERNEL=="rc[0-9]*", RUN+="/usr/bin/ir-keytable -a /etc/rc_keymaps/rc-rk322x-tvbox.toml -s $kernel"
+UDEV
+$SUDO udevadm control --reload-rules
+$SUDO udevadm trigger --subsystem-match=rc
+
+# triggerhappy: daemon minúsculo (não precisa de X, não precisa de
+# desktop) que converte eventos de tecla (agora gerados pelo keymap
+# acima) em comandos reais. Alternativa mais pesada seria escutar
+# /dev/input diretamente dentro do app C++, mas o controle remoto não é
+# parte da UI do kiosk (não navega slides) — é controle de energia/som
+# do aparelho, então fica fora do binário principal.
+log "Configurando triggerhappy (POWER = poweroff; VOL+/VOL-/MUTE = ALSA)"
+$SUDO tee /usr/local/bin/tvbox-volume > /dev/null <<'SH'
+#!/usr/bin/env bash
+# Ajusta o primeiro mixer ALSA disponível. Detecta o nome do controle em
+# vez de assumir "Master" porque a saída de áudio deste hardware é via
+# HDMI (snd_soc_hdmi_codec) e o nome do controle simples varia por board
+# — alguns nem expõem controle de volume por software (TV controla o
+# volume nesse caso), então falha em silêncio (log, não erro) se não
+# houver nenhum.
+set -euo pipefail
+control="$(amixer scontrols 2>/dev/null | head -n1 | sed -E "s/^Simple mixer control '([^']+)'.*/\1/")"
+if [ -z "$control" ]; then
+  logger -t tvbox-volume "nenhum mixer ALSA encontrado (provável saída HDMI sem volume por software) — ignorando"
+  exit 0
+fi
+case "$1" in
+  up)     amixer -q sset "$control" 5%+ ;;
+  down)   amixer -q sset "$control" 5%- ;;
+  toggle) amixer -q sset "$control" toggle ;;
+esac
+SH
+$SUDO chmod +x /usr/local/bin/tvbox-volume
+
+$SUDO mkdir -p /etc/triggerhappy/triggers.d
+$SUDO tee /etc/triggerhappy/triggers.d/tvbox-remote.conf > /dev/null <<'THD'
+KEY_POWER      1  /usr/sbin/poweroff
+KEY_VOLUMEUP   1  /usr/local/bin/tvbox-volume up
+KEY_VOLUMEDOWN 1  /usr/local/bin/tvbox-volume down
+KEY_MUTE       1  /usr/local/bin/tvbox-volume toggle
+THD
+$SUDO systemctl enable --now triggerhappy
+
 LOCAL_BIN="$HOME/.local/bin"
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$LOCAL_BIN"; then
   log "Adicionando $LOCAL_BIN ao PATH (~/.bashrc)"
@@ -111,6 +193,9 @@ if [ "$WITH_BUILD_DEPS" = true ]; then
   echo -n "cmake:  "; cmake --version | head -1
   echo -n "g++:    "; g++ --version | head -1
 fi
+echo -n "controle remoto (rc0): "
+if [ -e /sys/class/rc/rc0 ]; then echo "detectado"; else echo "NÃO detectado (ver docs/memory/known-issues.md)"; fi
+echo -n "triggerhappy:          "; systemctl is-active triggerhappy 2>/dev/null || echo "inativo"
 
 echo
 echo "Pronto. Lembre de manter o yt-dlp atualizado de tempos em tempos:"

@@ -58,7 +58,10 @@ Dependências de runtime no dispositivo (não precisam estar presentes
 para compilar, só para o app funcionar de verdade em produção):
 `mpv`, `yt-dlp` (+ `python3`), `curl`, `chromium` (painel institucional,
 ver seção "Rodar em modo kiosk" abaixo), `x11-xserver-utils` (`xrandr`/
-`xset`) e `unclutter-xfixes` (esconde o cursor do mouse).
+`xset`), `unclutter-xfixes` (esconde o cursor do mouse), e
+`ir-keytable`/`triggerhappy`/`alsa-utils` (controle remoto IR do
+hardware — liga/desliga e volume, ver
+[`docs/memory/known-issues.md`](docs/memory/known-issues.md) item -6).
 
 > Fluxo recomendado: compilar num host de desenvolvimento (ou CI) e
 > copiar apenas o binário final para o dispositivo Armbian — não é

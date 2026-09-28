@@ -182,6 +182,21 @@ de ancoragem da janela principal não afeta o posicionamento do vídeo.
   invoca é o próprio `mpv` — via `ytdl_hook` — só quando o vídeo não é
   um arquivo direto, e não fica residente).
 
+## Controle remoto IR (fora do binário C++)
+O receptor IR já vem embutido no hardware e é reconhecido de fábrica
+pelo kernel/device-tree do RK3229 (`gpio_ir_recv` + decodificador NEC,
+confirmado via `dmesg` num dispositivo real) — o que faltava era só um
+keymap (tradução scancode→tecla), inexistente na imagem Armbian
+genérica. Como o controle remoto aqui só liga/desliga o aparelho e mexe
+no volume (não navega slides — o slideshow é 100% automático por
+`duracao_segundos`), essa habilitação fica inteiramente em `install.sh`
+(keymap em `/etc/rc_keymaps/`, regra `udev` própria, `triggerhappy`
+convertendo tecla→comando), **fora do processo `tvbox_esus_app`**. Se
+algum dia o app ganhar navegação manual por controle, aí sim faria
+sentido o binário ler `/dev/input` diretamente — não implementado por
+não ser necessário agora. Detalhe completo (scancodes, decisões sobre o
+botão POWER, script de volume) em [[known-issues]] item -6.
+
 ## Build
 - `CMakeLists.txt` é o build system canônico (já resolve a dependência do
   Raylib via `FetchContent`, que não costuma estar empacotado pra
