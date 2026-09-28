@@ -53,15 +53,41 @@ liga/desliga + volume, não navegação de UI):
 - Bloco de verificação no fim do `install.sh` checando `/sys/class/
   rc/rc0` e status do `triggerhappy`.
 
+### Bug real encontrado no primeiro `install.sh` (usuário testou e reportou "funcionou não")
+Usuário rodou o `install.sh` da primeira versão e reportou que não
+funcionou. Pedi diagnóstico correlacionado (`systemctl status
+triggerhappy`, aplicar o keymap manualmente) — `triggerhappy` estava
+rodando normal, mas `ir-keytable -w ... -s rc0` (rodado na mão pelo
+usuário) devolveu `Invalid parameter on line 1`. Investiguei baixando o
+`.deb` real do pacote (`apt-get download ir-keytable`, sem precisar de
+dispositivo IR de verdade) e testando nesta sandbox: achei **dois erros
+meus** na primeira versão:
+1. Usei a flag `-a` (`--auto-load`) no comando do `udev`, que serve pra
+   um arquivo de *associação* driver→tabela→arquivo (formato do
+   `rc_maps.cfg`), não pra carregar o `.toml` do keymap em si. A flag
+   certa é `-w` (`--write`).
+2. O `.toml` em si tinha sintaxe errada:
+   `[[protocols.scancodes]]`/`scancode =`/`keycode =` (inventado por
+   analogia com `[[protocols]]`) em vez do formato real
+   `[protocols.scancodes]` com `0xHEX = "KEY_NOME"` — confirmado
+   comparando com `pine64.toml`, exemplo oficial do próprio pacote pra
+   um board ARM parecido.
+
+Corrigido `install.sh` (flag `-w` na regra udev, `.toml` reescrito no
+formato certo) e validado nesta sandbox: `ir-keytable -w
+<nosso-arquivo> -s rc0` agora imprime `Read rc-rk322x-tvbox table` (só
+falha depois com "No devices found", esperado — não tem hardware IR
+aqui).
+
 ### Verificado de fato / o que falta
-`bash -n install.sh` passou (sintaxe). Os 4 scancodes foram confirmados
-nominalmente pelo usuário no dispositivo real. **O que NÃO testei**:
-rodar o `install.sh` atualizado de ponta a ponta no dispositivo e
-confirmar que apertar POWER desliga de verdade e VOL+/-/MUTE mexem no
-áudio — não acionei `poweroff` remotamente durante o diagnóstico (é
-destrutivo pro teste, desligaria o aparelho de verdade). Pedido pro
-usuário: `git pull` + `./install.sh` de novo + reteste físico dos 4
-botões. Detalhe completo em [[known-issues]] item -6.
+`bash -n install.sh` passou (sintaxe). O parse do `.toml` corrigido foi
+validado com o binário real do `ir-keytable` extraído do `.deb`
+(nesta sandbox, sem hardware). **O que ainda NÃO foi confirmado**: a
+correção completa (flag + sintaxe) no dispositivo real — pedido pro
+usuário `git pull` + `./install.sh` de novo + reteste físico dos 4
+botões (POWER, VOL+, VOL-, MUTE). Também não acionei `poweroff`
+remotamente durante nenhum diagnóstico (destrutivo, desligaria o
+aparelho de verdade). Detalhe completo em [[known-issues]] item -6.
 
 ---
 

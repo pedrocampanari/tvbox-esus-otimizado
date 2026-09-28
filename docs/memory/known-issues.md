@@ -42,11 +42,29 @@ então fica inteiramente no nível de sistema):
 1. Keymap gravado em `/etc/rc_keymaps/rc-rk322x-tvbox.toml` com os 4
    scancodes acima.
 2. Regra `udev` própria (`/etc/udev/rules.d/99-tvbox-ir-remote.rules`)
-   que roda `ir-keytable -a <keymap> -s $kernel` toda vez que uma
+   que roda `ir-keytable -w <keymap> -s $kernel` toda vez que uma
    interface `rc*` aparece — **decisão deliberada de não confiar no
    casamento automático do `/etc/rc_maps.cfg`** do pacote `ir-keytable`
    (mesmo padrão de preferir determinismo sobre autodetecção que já
    usamos pro `--gpu-context=x11egl` do mpv, ver item 5 abaixo).
+   **Bug real corrigido nesta mesma sessão**: a primeira versão usava
+   `-a` (`--auto-load`), que **não** carrega um keymap diretamente — é
+   pra um arquivo estilo `rc_maps.cfg` que *associa* driver→tabela→
+   arquivo, formato totalmente diferente do nosso `.toml`. Resultado:
+   `Invalid parameter on line 1` ao tentar aplicar. A flag certa pra
+   carregar um `.toml` de keymap direto num dispositivo é `-w`
+   (`--write`, "adiciona" o keymap) — confirmado extraindo o `.deb` real
+   do pacote Debian (`ir-keytable 1.22.1-5+b2`) e testando `-w` contra o
+   nosso arquivo e contra `pine64.toml` (exemplo oficial do próprio
+   pacote, mesmo protocolo `nec`/`necx`) nesta sandbox: ambos imprimem
+   `Read <nome> table` com `-w`, e ambos falham com `Invalid parameter`
+   usando `-a` — não era só o nosso arquivo, é uso errado da flag.
+   Também corrigido o formato do `.toml` em si nessa mesma investigação:
+   a sintaxe certa é `[protocols.scancodes]` (tabela, colchete simples)
+   com pares `0xHEX = "KEY_NOME"`, não `[[protocols.scancodes]]` (array
+   de tabelas) com campos `scancode =`/`keycode =` (o que eu tinha
+   escrito na primeira tentativa, por analogia errada com a sintaxe de
+   `[[protocols]]`).
 3. `triggerhappy` (daemon leve, sem X, sem desktop) convertendo as
    teclas em ações: `KEY_POWER` → `/usr/sbin/poweroff`; `KEY_VOLUMEUP`/
    `KEY_VOLUMEDOWN`/`KEY_MUTE` → script `/usr/local/bin/tvbox-volume`

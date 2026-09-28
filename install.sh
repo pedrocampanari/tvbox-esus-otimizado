@@ -105,19 +105,13 @@ $SUDO mkdir -p /etc/rc_keymaps
 $SUDO tee /etc/rc_keymaps/rc-rk322x-tvbox.toml > /dev/null <<'TOML'
 [[protocols]]
 name = "rc-rk322x-tvbox"
-protocol = "necx"
-[[protocols.scancodes]]
-scancode = "0x50540"
-keycode = "KEY_POWER"
-[[protocols.scancodes]]
-scancode = "0x5054c"
-keycode = "KEY_VOLUMEUP"
-[[protocols.scancodes]]
-scancode = "0x50541"
-keycode = "KEY_VOLUMEDOWN"
-[[protocols.scancodes]]
-scancode = "0x50518"
-keycode = "KEY_MUTE"
+protocol = "nec"
+variant = "necx"
+[protocols.scancodes]
+0x50540 = "KEY_POWER"
+0x5054c = "KEY_VOLUMEUP"
+0x50541 = "KEY_VOLUMEDOWN"
+0x50518 = "KEY_MUTE"
 TOML
 
 # Regra própria em vez de confiar no casamento automático do
@@ -128,7 +122,7 @@ TOML
 # o "Default keymap" certo nem do formato do rc_maps.cfg da distro.
 log "Instalando regra udev para carregar o keymap ao detectar o receptor IR"
 $SUDO tee /etc/udev/rules.d/99-tvbox-ir-remote.rules > /dev/null <<'UDEV'
-ACTION=="add", SUBSYSTEM=="rc", KERNEL=="rc[0-9]*", RUN+="/usr/bin/ir-keytable -a /etc/rc_keymaps/rc-rk322x-tvbox.toml -s $kernel"
+ACTION=="add", SUBSYSTEM=="rc", KERNEL=="rc[0-9]*", RUN+="/usr/bin/ir-keytable -w /etc/rc_keymaps/rc-rk322x-tvbox.toml -s $kernel"
 UDEV
 $SUDO udevadm control --reload-rules
 $SUDO udevadm trigger --subsystem-match=rc
