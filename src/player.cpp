@@ -164,6 +164,7 @@ void VideoPlayer::CloseIpcSocket() {
     if (!ipcSocketPath_.empty()) {
         unlink(ipcSocketPath_.c_str());
     }
+    ipcReadBuffer_.clear();
 }
 
 bool VideoPlayer::IsVideoActuallyPlaying() {
@@ -189,31 +190,49 @@ bool VideoPlayer::IsVideoActuallyPlaying() {
         }
     }
 
-    // Protocolo JSON IPC do mpv (documentado, estável): pergunta a
-    // posição atual de playback. Enquanto o mpv só está resolvendo a
-    // URL (ytdl_hook) ou bufferizando, "data" vem null; assim que ele
-    // realmente começa a decodificar/tocar, vem um número.
-    static const char kQuery[] = "{\"command\":[\"get_property\",\"time-pos\"]}\n";
-    ssize_t sent = write(ipcSocketFd_, kQuery, sizeof(kQuery) - 1);
-    if (sent < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-        close(ipcSocketFd_);
-        ipcSocketFd_ = -1;
-        return false;
+    // Detecta playback real esperando o evento "playback-restart" que o
+    // próprio mpv manda sozinho (sem precisarmos pedir nada) pra
+    // qualquer cliente IPC conectado, documentado como o sinal correto
+    // de "o primeiro frame de vídeo/áudio de verdade já foi
+    // (re)configurado e está saindo" — é a mesma técnica usada por
+    // bibliotecas cliente do mpv (ex.: python-mpv `wait_for_playback`).
+    //
+    // ANTES disto aqui checávamos a propriedade "time-pos" (não-nula =
+    // "tocando"). Trocado depois que o usuário relatou o vídeo ficando
+    // preto pra sempre SÓ no RK3229 real, exatamente depois desta
+    // confirmação-antes-de-mapear ter sido adicionada (antes, a janela
+    // era mapeada sem esperar nada, então sempre "funcionava" ainda que
+    // só mostrando preto por alguns segundos). Causa mais provável:
+    // "time-pos" reflete o relógio interno de playback e pode começar a
+    // avançar antes do primeiro frame decodificado ter sido de fato
+    // composto na janela X11 — folga pequena/imperceptível num decode
+    // rápido (VAAPI/x86 desta sandbox), mas potencialmente grande num
+    // decode por hardware mais lento ou com pipeline diferente
+    // (`rkmpp` no Mali-400 do RK3229) — mapeando a janela antes dela
+    // ter algo de verdade pra mostrar. "playback-restart" é o sinal que
+    // o próprio mpv considera definitivo, sem essa ambiguidade,
+    // confirmado ao vivo (`socat` bruto no socket) disparando só depois
+    // de "video-reconfig" já ter acontecido.
+    char buf[512];
+    for (;;) {
+        ssize_t n = read(ipcSocketFd_, buf, sizeof(buf));
+        if (n <= 0) break;
+        ipcReadBuffer_.append(buf, static_cast<size_t>(n));
+        if (static_cast<size_t>(n) < sizeof(buf)) break;
     }
 
-    char buf[512];
-    ssize_t n = read(ipcSocketFd_, buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = '\0';
-        std::string resp(buf, static_cast<size_t>(n));
-        auto pos = resp.find("\"data\":");
-        if (pos != std::string::npos) {
-            std::string rest = resp.substr(pos + 7);
-            if (rest.compare(0, 4, "null") != 0) {
-                videoConfirmedPlaying_ = true;
-            }
+    size_t searchFrom = 0;
+    for (;;) {
+        size_t newlinePos = ipcReadBuffer_.find('\n', searchFrom);
+        if (newlinePos == std::string::npos) break;
+        std::string line = ipcReadBuffer_.substr(searchFrom, newlinePos - searchFrom);
+        searchFrom = newlinePos + 1;
+
+        if (line.find("\"event\":\"playback-restart\"") != std::string::npos) {
+            videoConfirmedPlaying_ = true;
         }
     }
+    ipcReadBuffer_.erase(0, searchFrom);
 
     if (videoConfirmedPlaying_) {
         XMapRaised(display_, videoWindow_);

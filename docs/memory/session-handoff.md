@@ -1,5 +1,75 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-27 (parte 18) — vídeo preto no RK3229 real: trocado `time-pos` por `playback-restart`
+
+### Contexto
+Depois de testar o vídeo de ponta a ponta nesta sandbox (funcionando
+certinho, com decode VAAPI real), reportei isso ao usuário. Resposta
+direta: "Mas estava funcionando, foi depois de adicionar o loading" —
+ou seja, o vídeo tocava normalmente no RK3229 real ANTES da parte 13
+(animação de loading + confirmação via IPC antes de mapear a janela),
+e parou de funcionar (fica preto pra sempre) depois disso, só no
+dispositivo real.
+
+### Investigação
+Esse dado (funcionava antes, quebrou exatamente depois da parte 13)
+aponta direto pro código de `IsVideoActuallyPlaying()` como suspeito
+principal, não pro pipeline de vídeo em si (que não mudou). Reproduzi
+tudo de novo nesta sandbox, incluindo uma inspeção ao vivo do socket
+IPC do mpv via `socat` (conectando um segundo cliente passivo desde
+antes do vídeo começar a resolver, pra capturar mensagens espontâneas).
+Descobri que o mpv manda sozinho uma sequência de eventos JSON pro
+socket (sem precisarmos perguntar nada): `audio-reconfig`,
+`file-loaded`, `video-reconfig`, terminando em `playback-restart` — o
+evento que a própria documentação do mpv descreve como "o vídeo
+realmente recomeçou a tocar", usado por bibliotecas cliente (ex.:
+`wait_for_playback()` do python-mpv) exatamente pra esse propósito.
+
+Nosso código (parte 13) usava `time-pos` via polling em vez disso —
+propriedade que reflete o RELÓGIO de playback, que pode começar a
+avançar antes do primeiro frame decodificado ter sido de fato
+composto/exibido na janela. Num decode rápido (VAAPI/x86 desta
+sandbox) essa folga é pequena o bastante pra nunca ter aparecido nos
+meus testes anteriores; num pipeline mais lento ou diferente (`rkmpp`
+no Mali-400 do RK3229) a folga pode ser grande o bastante pra mapear a
+janela de vídeo bem antes dela ter qualquer frame real — o "loading"
+some (a confirmação disparou) mas fica preto pra sempre no lugar
+(nosso código não checa mais nada depois de confirmar uma vez).
+
+**Não consegui provar a corrida exata** (`time-pos` avançando ANTES de
+`playback-restart` disparar) nesta sandbox — aqui a resolução é rápida
+demais (~1s) pra separar os dois com as ferramentas que tinha à mão
+(testei com timestamps correlacionados, `time-pos` já vinha não-nulo
+na primeira query, antes até do meu listener de eventos conseguir
+conectar). Mas trocar pro sinal que o próprio mpv documenta como
+definitivo é estritamente melhor independente disso.
+
+### Fix aplicado
+`src/player.cpp::IsVideoActuallyPlaying()`: parou de mandar queries de
+`time-pos` (30x/segundo) — agora só escuta passivamente o socket IPC
+esperando a linha `{"event":"playback-restart"}`, e só aí mapeia a
+janela. Adicionado `ipcReadBuffer_` (`include/player.h`) pra acumular
+dados entre frames (uma linha JSON pode vir fatiada entre duas
+leituras). Efeito colateral bom: mais leve no CPU (zero queries/seg em
+vez de 30, relevante no RK3229).
+
+### Verificado de verdade nesta sandbox
+Rebuild limpo, rodei o app do zero múltiplas vezes, confirmei via
+screenshot (com retry, já que uma captura isolada às vezes pega um
+frame de transição — limitação de captura já conhecida, não do app)
+que o vídeo continua confirmando e tocando normalmente, na prática até
+mais rápido a aparecer que antes (mudança realmente ficou mais leve,
+não só teoricamente).
+
+### O que NÃO está confirmado
+Não tenho como reproduzir a corrida original (decode lento o bastante
+pra `time-pos` mentir) nesta sandbox — não tenho prova direta de que
+essa era a causa exata vista no RK3229, é a explicação mais plausível
+encontrada. Pedido pro usuário: `git pull` + rebuild + reteste no
+dispositivo real.
+
+---
+
 ## Sessão de 2026-09-27 (parte 17) — Chromium renderizou; falta esconder cursor e mensagens do navegador
 
 ### Contexto

@@ -71,15 +71,18 @@ public:
 
     bool IsPlaying() const;
 
-    // Pergunta ao mpv (via seu socket IPC JSON) se ele já está de fato
-    // decodificando/tocando (não só resolvendo a URL ou bufferizando).
-    // Retorna `false` até a primeira confirmação; a partir daí sempre
-    // `true` (até o próximo `Play()`/`Stop()`), e nesse instante exato a
-    // janela de vídeo é mapeada/exibida pela primeira vez — antes disso
-    // ela fica escondida, pra dar tempo da animação de carregamento
-    // (desenhada por fora, no Raylib) aparecer sem um quadro preto do
-    // mpv por cima. Chamar isso todo frame enquanto o slide de vídeo
-    // estiver ativo e ainda não confirmado.
+    // Detecta playback real via o evento "playback-restart" que o mpv
+    // manda sozinho (sem precisar perguntar nada) pelo seu socket IPC
+    // JSON assim que o primeiro frame de verdade foi (re)configurado e
+    // está saindo — não é mais baseado em polling de propriedade (ver
+    // src/player.cpp pro histórico do porquê). Retorna `false` até a
+    // primeira confirmação; a partir daí sempre `true` (até o próximo
+    // `Play()`/`Stop()`), e nesse instante exato a janela de vídeo é
+    // mapeada/exibida pela primeira vez — antes disso ela fica
+    // escondida, pra dar tempo da animação de carregamento (desenhada
+    // por fora, no Raylib) aparecer sem um quadro preto do mpv por
+    // cima. Chamar isso todo frame enquanto o slide de vídeo estiver
+    // ativo e ainda não confirmado.
     bool IsVideoActuallyPlaying();
 
 private:
@@ -89,6 +92,7 @@ private:
 
     int ipcSocketFd_ = -1;
     std::string ipcSocketPath_;
+    std::string ipcReadBuffer_;
     bool videoConfirmedPlaying_ = false;
 
     // Valida a URL da campanha (trata "TODO"/vazio) e a repassa como

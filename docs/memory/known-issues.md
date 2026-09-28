@@ -1,5 +1,62 @@
 # Problemas e decisões em aberto conhecidas
 
+## -5. Vídeo ficava preto pra sempre SÓ no RK3229 real, depois da animação de loading ser adicionada — RESOLVIDO em 2026-09-27 (correção teórica; aguardando confirmação no hardware real)
+Usuário confirmou o regressivo mais direto desta sessão toda: "Mas
+estava funcionando, foi depois de adicionar o loading" — ou seja, o
+vídeo tocava certinho ANTES da parte 13 (animação de carregamento +
+confirmação via IPC antes de mapear a janela) e parou de funcionar
+(fica preto pra sempre) depois, só no dispositivo real — nunca
+reproduziu nesta sandbox x86_64/VAAPI.
+
+**Causa provável**: `IsVideoActuallyPlaying()` (adicionado na parte 13)
+confirmava playback checando a propriedade `time-pos` via polling (uma
+pergunta por frame, 30x/segundo) — assim que vinha um número (não
+`null`), mapeava a janela do vídeo. Problema: `time-pos` reflete o
+relógio interno de playback do mpv, que pode começar a avançar ANTES
+do primeiro frame decodificado ter sido de fato composto/exibido na
+janela X11 — a folga entre "relógio avançando" e "frame realmente na
+tela" é imperceptível num decode rápido (VAAPI/x86, como aqui na
+sandbox), mas pode ser bem maior num pipeline de hardware mais lento
+ou diferente (`rkmpp` no Mali-400 do RK3229, presumivelmente o que
+`--hwdec=auto` escolhe lá) — mapeando a janela de vídeo antes dela ter
+qualquer frame de verdade pra mostrar, resultando em preto permanente
+(o "loading" desaparece — a confirmação disparou — mas nada aparece no
+lugar, e nosso código para de checar qualquer coisa depois de
+confirmado uma vez).
+
+**Como cheguei nessa causa**: reproduzi o pipeline completo várias
+vezes nesta sandbox depois do usuário relatar o bug, incluindo uma
+inspeção direta e ao vivo do socket IPC do mpv (via `socat`) durante a
+fase de resolução/buffering de um vídeo real do YouTube — confirmei
+que o mpv manda sozinho (sem pedirmos nada) uma sequência de eventos
+JSON pro socket, terminando em `{"event":"playback-restart"}`, que a
+própria documentação do mpv descreve como o sinal de "o vídeo
+realmente recomeçou a tocar" — a mesma técnica usada por bibliotecas
+cliente do mpv (ex.: `wait_for_playback()` do python-mpv). Não consegui
+provar a corrida exata (`time-pos` disparando ANTES de
+`playback-restart`) nesta sandbox porque aqui a resolução é rápida
+demais (~1s) pra separar os dois eventos com as ferramentas que tinha
+à mão — mas trocar pro sinal que o próprio mpv documenta como
+definitivo elimina a ambiguidade de qualquer jeito, independente de eu
+conseguir reproduzir a corrida exata aqui.
+
+**Fix aplicado**: `IsVideoActuallyPlaying()` (`src/player.cpp`) não
+faz mais polling de `time-pos` — só escuta passivamente o socket IPC
+(sem mandar pergunta nenhuma) esperando a linha
+`{"event":"playback-restart"}`, e só aí mapeia a janela. Efeito
+colateral bom: também é mais leve (zero queries/segundo em vez de 30,
+importante no CPU fraco do RK3229). Retestado de ponta a ponta nesta
+sandbox depois da mudança: vídeo continua confirmando e tocando
+normalmente (ainda mais rápido a aparecer que antes, na prática).
+
+**O que NÃO está confirmado ainda**: não tenho como reproduzir a
+corrida original (decode lento o bastante pra `time-pos` mentir) nesta
+sandbox, então não tenho uma prova direta de que ESTE era o bug exato
+visto no RK3229 — é a explicação mais plausível e mais bem
+fundamentada que encontrei, e a correção (usar o sinal que o mpv
+recomenda) é estritamente melhor independente disso. Precisa
+confirmação real do usuário no dispositivo.
+
 ## -4. Cursor do mouse visível + mensagens do navegador (tradução automática, aviso de flag não suportada) — RESOLVIDO em 2026-09-27
 Usuário reportou, depois de confirmar que o Chromium já renderizava:
 "nao quero que apareca o cursor. nem mensagens do navegador como O
