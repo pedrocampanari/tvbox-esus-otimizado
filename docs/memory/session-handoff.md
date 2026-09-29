@@ -1,5 +1,76 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-29 (parte 20) — WiFi onboard (SSV6051) quebrado: pesquisa confirma bug conhecido, sem fix; adotado dongle USB
+
+### Pedido do usuário
+"Para usar a interet wifi achei armbian-config onde apresenta a opcao
+de alternar o kernel" — sem pergunta direta, mas dava pra ler como "devo
+trocar de kernel pra resolver o WiFi?".
+
+### Por que não deixei passar direto pro diagnóstico
+Trocar de kernel de um dispositivo que já tem vídeo/GPU/controle remoto
+validados é arriscado o bastante pra merecer pausa — pedi confirmação
+do sintoma exato antes de qualquer coisa. Descobri que nenhuma
+interface WiFi aparecia (`ip link`), mas a Ethernet (`end0`) já estava
+`UP`/`LOWER_UP` com cabo conectado. Perguntei se o local FINAL de
+instalação teria cabo — não teria (só WiFi lá), então o problema
+precisava mesmo ser resolvido, não contornado com Ethernet.
+
+### Diagnóstico
+Pedi `ip link`/`lsmod`/`dmesg`/`rfkill list`, feito com o dispositivo
+recém-ligado (confirmei explicitamente que o kiosk/Chromium/mpv ainda
+NÃO estavam rodando — descarta disputa de memória/CMA como causa).
+`dmesg` mostrou: driver carrega com `Using SSV6051Q setting`, mas ao
+tentar subir a interface de verdade o chip se identifica como
+`SSV6006C0` — incompatibilidade de perfil. Calibração de RF falha 100
+de 100 tentativas. Ao inicializar: `Failed to allocate packet buffer`,
+`Failed to initialize mac, ret=1`.
+
+### Pesquisa que evitou trabalho perdido
+Usei `WebSearch` + `WebFetch` (ferramentas carregadas via `ToolSearch`
+nesta sessão) e achei uma thread do fórum oficial do Armbian com os
+MESMOS sintomas exatos, investigação bem mais profunda: escritas de
+registro via SDIO são confirmadas pelo barramento mas nunca persistem
+no chip de verdade. Testado pela pessoa em DUAS versões de kernel
+diferentes (6.6.16 e 6.18.46) — comportamento idêntico nas duas. Testado
+em dois dispositivos iguais — mesmo bug nos dois. WiFi funciona
+normalmente no Android original (firmware de fábrica). **Nenhuma
+solução foi encontrada** até a data do post.
+
+Isso me deu confiança pra recomendar contra a troca de kernel (já
+testada por outra pessoa, sem efeito) e a favor de um dongle USB WiFi
+externo (Realtek RTL8188EUS/RTL8192EU) como caminho pragmático, em vez
+de perseguir um bug que nem um especialista dedicado resolveu.
+
+### O que fiz (install.sh)
+- `wpasupplicant` + `isc-dhcp-client` nos pacotes de runtime.
+- Blacklist do driver `ssv6051` quebrado
+  (`/etc/modprobe.d/blacklist-ssv6051-wifi.conf`) — evita ruído/atraso
+  de boot com tentativas fadadas ao fracasso.
+- Detecção de dongle USB WiFi conectado (`lsusb`) no bloco de
+  verificação.
+- Instruções impressas pra configurar a conexão via
+  `/etc/network/interfaces` (persistente — sobrevive reboot), sem
+  hardcodar SSID/senha no script (segredo do usuário, script é
+  versionado no git) nem assumir nome de interface (só se sabe depois
+  do dongle conectado).
+
+### Também respondido: remover "Install linux headers"
+Usuário mencionou ter instalado isso via `armbian-config` antes.
+Recomendei remover — não serve mais pra nada dado que não vamos tentar
+recompilar/patchar o driver `ssv6051` (a pesquisa mostrou que nem um
+especialista conseguiu), e o projeto é otimizado pra pouco espaço em
+flash (16GB).
+
+### Verificado / o que falta
+`bash -n install.sh` validado. **Nada testado no hardware real ainda**
+— nenhum dongle USB foi conectado nesta sessão. Pedido pro usuário
+`git pull` + `./install.sh` de novo + conectar um dongle + seguir as
+instruções impressas no fim do script. Detalhe completo (log bruto,
+fonte da pesquisa) em [[known-issues]] item -7.
+
+---
+
 ## Sessão de 2026-09-27 (parte 19) — controle remoto IR: keymap + triggerhappy
 
 ### Pedido do usuário

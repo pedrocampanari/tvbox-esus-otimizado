@@ -61,7 +61,10 @@ ver seção "Rodar em modo kiosk" abaixo), `x11-xserver-utils` (`xrandr`/
 `xset`), `unclutter-xfixes` (esconde o cursor do mouse), e
 `ir-keytable`/`triggerhappy`/`alsa-utils` (controle remoto IR do
 hardware — liga/desliga e volume, ver
-[`docs/memory/known-issues.md`](docs/memory/known-issues.md) item -6).
+[`docs/memory/known-issues.md`](docs/memory/known-issues.md) item -6),
+e `wpasupplicant`/`isc-dhcp-client` (conexão WiFi via dongle USB
+externo — o WiFi onboard desta placa é conhecidamente quebrado sob
+Armbian, sem fix disponível; ver item -7 do mesmo arquivo).
 
 > Fluxo recomendado: compilar num host de desenvolvimento (ou CI) e
 > copiar apenas o binário final para o dispositivo Armbian — não é

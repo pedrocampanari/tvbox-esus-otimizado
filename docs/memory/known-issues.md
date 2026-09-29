@@ -1,5 +1,84 @@
 # Problemas e decisões em aberto conhecidas
 
+## -7. WiFi onboard (chip SSV6051) não funciona sob Armbian — bug conhecido da comunidade, sem fix; workaround adotado: dongle USB
+Usuário achou `armbian-config` com opção de trocar de kernel, pensando
+em usar isso pra resolver o WiFi que não funcionava. Antes de mexer no
+kernel (risco real: destabilizaria tudo que já validamos nesta sessão —
+vídeo por hardware, GPU ES2.0, controle remoto), pedi diagnóstico.
+
+**Diagnóstico, feito com o dispositivo recém-ligado (antes do kiosk
+iniciar — descarta disputa de memória/CMA com o `mpv`/Chromium)**:
+- `wlan0` existe (`ip link`), driver `ssv6051`/`mac80211`/`cfg80211`
+  carregados, `rfkill list` mostra nenhum bloqueio (soft/hard). Ou seja,
+  o hardware É reconhecido e o driver carrega — o problema é mais fundo.
+- `dmesg` mostra: `Using SSV6051Q setting` (perfil que o driver
+  configura sozinho no probe) mas depois, ao tentar subir a interface
+  de verdade, `chip id: SSV6006C0` — um identificador diferente do
+  perfil assumido. Entre esses dois pontos, calibração de RF **falha
+  100 de 100 tentativas** (`calibation fail after N iterations`, N de 1
+  a 100). Na hora de inicializar de verdade: `Failed to allocate packet
+  buffer of 904 bytes`, `opps allocate pbuf error`, `WARNING` do kernel
+  em `ssv6xxx_init_mac`, terminando em `Failed to initialize mac,
+  ret=1`.
+
+**Confirmado como problema conhecido da comunidade, não específico
+desta unidade**: uma thread do fórum oficial do Armbian
+([rk322x-box: SSV6051 wifi never comes up — register writes are ACKed
+but never persist (6.6.16 and 6.18.46)](https://forum.armbian.com/topic/61742-rk322x-box-ssv6051-wifi-never-comes-up-%E2%80%94-register-writes-are-acked-but-never-persist-6616-and-61846/))
+documenta EXATAMENTE os mesmos sintomas, com uma investigação bem mais
+profunda que a nossa:
+- Escritas de registro via SDIO são confirmadas no nível de transporte
+  (`sdio_memcpy_toio()` retorna sucesso, contadores de erro SDIO ficam
+  zerados) **mas o valor nunca chega de verdade no chip** — leituras
+  funcionam perfeitamente, só escritas não persistem.
+- Testado em **duas versões de kernel diferentes** (6.6.16 e 6.18.46),
+  comportamento **idêntico** nas duas — ou seja, trocar de kernel pelo
+  `armbian-config` **não deveria resolver isso** (já foi testado, na
+  prática, em duas versões diferentes por outra pessoa).
+- Testado em **dois dispositivos** iguais, mesmo problema nos dois —
+  não é peça defeituosa isolada.
+- Confirmado que o WiFi funciona normalmente no **Android original**
+  (firmware de fábrica) desses mesmos boxes — o driver vendor/Android
+  faz algo diferente na sequência de energização/inicialização do
+  barramento SDIO que o Armbian não replica.
+- **Nenhuma solução foi encontrada** até a data da thread — fica em
+  aberto pedindo ajuda de especialista em SSV6051/análise de barramento.
+
+**Decisão tomada com o usuário**: não vale a pena perseguir esse bug
+(nem um especialista dedicado numa thread pública conseguiu resolver) —
+e trocar de kernel é uma aposta com evidência CONTRA funcionar, com
+risco real de quebrar IR/GPU/vídeo já validados. Caminho escolhido:
+**dongle USB WiFi externo** (chipset Realtek RTL8188EUS/RTL8192EU
+recomendado — suporte nativo bem estabelecido no kernel Linux,
+plug-and-play), contornando o SSV6051 quebrado por completo.
+
+**Implementado em `install.sh`**:
+- `wpasupplicant` + `isc-dhcp-client` adicionados aos pacotes de
+  runtime (necessários pra conectar QUALQUER adaptador WiFi via
+  `/etc/network/interfaces`, independente do dongle específico).
+- `/etc/modprobe.d/blacklist-ssv6051-wifi.conf` bloqueando o driver
+  quebrado — evita ~4s de tentativas de calibração fadadas ao fracasso
+  a cada boot e o ruído de `WARNING`s no `dmesg` (que podia confundir
+  diagnóstico futuro deste projeto). Reversível (apagar o arquivo) se
+  algum dia um driver corrigido aparecer upstream.
+- Detecção de adaptador USB WiFi conectado (`lsusb`, procurando
+  Realtek/Ralink/Atheros/MediaTek) no bloco de verificação final.
+- Instruções impressas no fim do `install.sh` pra configurar a conexão
+  de forma **persistente** (sobrevive reboot/religar da tomada — via
+  `/etc/network/interfaces`, o mecanismo padrão do Debian/`ifupdown`,
+  que é o que provavelmente já gerencia a interface `end0` cabeada
+  neste dispositivo, já que não há evidência de NetworkManager
+  instalado). **Não automatizado** — SSID/senha são segredos do usuário
+  e não devem ir pro `install.sh` (que é versionado no git); também não
+  dá pra saber o nome exato da interface (`wlan1`, etc.) até o dongle
+  específico estar conectado.
+
+**O que ainda NÃO foi testado**: nenhum dongle USB foi conectado ainda
+nesta sessão — pedido pro usuário `git pull` + `./install.sh` de novo
+(aplica a blacklist + instala os pacotes) + conectar um dongle
+Realtek/Ralink/Atheros/MediaTek + seguir as instruções impressas no
+fim do `install.sh` pra configurar a rede.
+
 ## -6. Controle remoto IR do hardware não fazia nada — RESOLVIDO em 2026-09-27 (POWER confirmado desligando de verdade no dispositivo real; VOL+/VOL-/MUTE aguardando reteste)
 Pedido do usuário: "preciso reabilitar o controle remoto que veio com o
 hardware". Não é regressão nossa — o Armbian genérico nunca tinha esse

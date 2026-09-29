@@ -53,7 +53,9 @@ $SUDO apt install -y \
   chromium \
   ir-keytable \
   triggerhappy \
-  alsa-utils
+  alsa-utils \
+  wpasupplicant \
+  isc-dhcp-client
 
 if [ "$WITH_BUILD_DEPS" = true ]; then
   # xorg-dev: metapacote oficial que o próprio GLFW recomenda pra
@@ -147,6 +149,41 @@ KEY_POWER 1 /usr/sbin/poweroff
 THD
 $SUDO systemctl enable --now triggerhappy
 
+# WiFi onboard (chip SSV6051, driver ssv6051) é conhecidamente quebrado
+# nesta placa sob Armbian: escritas de registro via SDIO são confirmadas
+# pelo barramento mas nunca chegam no chip de verdade (bug documentado
+# na comunidade, não é algo que resolvemos ou vamos resolver por
+# software — ver docs/memory/known-issues.md item -7 para o
+# investigação completa e a fonte). Caminho adotado: dongle USB WiFi
+# externo (chipset Realtek RTL8188EUS/RTL8192EU recomendado — suporte
+# nativo no kernel, plug-and-play). Blacklist do driver quebrado evita
+# ~4s de tentativas de calibração fadadas ao fracasso a cada boot e o
+# ruído de WARNs no dmesg (que também podia confundir diagnóstico
+# futuro deste projeto). Reversível: apagar o arquivo abaixo se algum
+# dia quiser tentar o chip onboard de novo (ex.: driver corrigido
+# upstream).
+log "Desabilitando driver WiFi onboard quebrado (ssv6051) — ver known-issues item -7"
+$SUDO tee /etc/modprobe.d/blacklist-ssv6051-wifi.conf > /dev/null <<'MODPROBE'
+# SSV6051 (WiFi onboard do RK3229 TV box): escritas de registro via SDIO
+# nao persistem no chip sob Armbian (bug documentado, nao ha fix
+# conhecido). Ver docs/memory/known-issues.md item -7. Usamos dongle USB
+# WiFi externo em vez disso.
+blacklist ssv6051
+MODPROBE
+
+# wpasupplicant + isc-dhcp-client (instalados acima) bastam pra conectar
+# um dongle USB WiFi na mao, sem precisar de NetworkManager (daemon mais
+# pesado, desnecessario aqui — a conexao e configurada uma vez e fica
+# fixa, nao precisa de gerenciamento continuo/roaming). Ver README para
+# o passo a passo de conexão.
+log "Verificando adaptador USB WiFi conectado"
+if command -v lsusb >/dev/null 2>&1 && lsusb 2>/dev/null | grep -qiE 'realtek|ralink|atheros|mediatek|wireless'; then
+  echo "Adaptador USB WiFi detectado:"
+  lsusb | grep -iE 'realtek|ralink|atheros|mediatek|wireless'
+else
+  echo "Nenhum adaptador USB WiFi detectado ainda (ok se ainda nao conectou o dongle)."
+fi
+
 LOCAL_BIN="$HOME/.local/bin"
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$LOCAL_BIN"; then
   log "Adicionando $LOCAL_BIN ao PATH (~/.bashrc)"
@@ -172,10 +209,30 @@ fi
 echo -n "controle remoto (rc0): "
 if [ -e /sys/class/rc/rc0 ]; then echo "detectado"; else echo "NÃO detectado (ver docs/memory/known-issues.md)"; fi
 echo -n "triggerhappy:          "; systemctl is-active triggerhappy 2>/dev/null || echo "inativo"
+echo -n "wifi onboard (ssv6051): "
+if lsmod 2>/dev/null | grep -q '^ssv6051'; then
+  echo "carregado (blacklist nao aplicada ainda? reboot pendente)"
+else
+  echo "bloqueado (esperado — ver known-issues item -7, use dongle USB)"
+fi
 
 echo
 echo "Pronto. Lembre de manter o yt-dlp atualizado de tempos em tempos:"
 echo "  yt-dlp -U"
+echo
+echo "WiFi onboard (SSV6051) e conhecidamente quebrado nesta placa — use"
+echo "um dongle USB WiFi (Realtek RTL8188EUS/RTL8192EU recomendado)."
+echo "Depois de conectar o dongle, pra configurar a rede DE FORMA"
+echo "PERSISTENTE (sobrevive a reboot/religar da tomada — ver"
+echo "docs/memory/known-issues.md item -7 pro passo a passo completo):"
+echo "  ip link                      # confirme o nome da interface (ex.: wlan1)"
+echo "  sudo tee -a /etc/network/interfaces <<CFG"
+echo "  auto wlan1"
+echo "  iface wlan1 inet dhcp"
+echo "      wpa-ssid \"SEU_SSID\""
+echo "      wpa-psk  \"SUA_SENHA\""
+echo "  CFG"
+echo "  sudo ifup wlan1   # ou reboot"
 echo
 echo "Pra rodar o kiosk (+ painel institucional no Chromium) direto ao"
 echo "subir o X (sem gerenciador de janelas):"
