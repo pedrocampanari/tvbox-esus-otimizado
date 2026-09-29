@@ -128,6 +128,11 @@ int main() {
     // include/remote_control.h). POWER continua fora do processo, via
     // triggerhappy — ver docs/memory/known-issues.md item -6.
     RemoteControl remote;
+    if (!remote.IsAvailable()) {
+        TraceLog(LOG_WARNING,
+                  "RemoteControl: receptor IR (driver 'gpio_ir_recv') nao encontrado em "
+                  "/proc/bus/input/devices; VOL+/VOL-/MUTE do controle remoto serao ignorados.");
+    }
     double volumeOsdUntil = 0.0;
     int volumeOsdPercent = 0;
     bool volumeOsdMuted = false;
@@ -225,6 +230,17 @@ int main() {
                 volumeOsdPercent = newPercent;
                 volumeOsdMuted = newMuted;
                 volumeOsdUntil = GetTime() + kVolumeOsdDurationSeconds;
+            } else {
+                // So loga uma vez (nao a cada toque de botao) — motivo
+                // mais provavel: nenhum mixer ALSA por software (saida
+                // HDMI pura) ou `amixer` ausente do PATH.
+                static bool warnedAdjustFailed = false;
+                if (!warnedAdjustFailed) {
+                    TraceLog(LOG_WARNING,
+                              "RemoteControl: tecla de volume detectada, mas AdjustVolume() falhou "
+                              "(sem mixer ALSA controlavel, ou 'amixer' nao encontrado?).");
+                    warnedAdjustFailed = true;
+                }
             }
         }
         bool showVolumeOsd = GetTime() < volumeOsdUntil;

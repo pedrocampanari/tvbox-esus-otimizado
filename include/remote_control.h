@@ -31,6 +31,12 @@ public:
     RemoteControl(const RemoteControl &) = delete;
     RemoteControl &operator=(const RemoteControl &) = delete;
 
+    // true se o receptor foi encontrado e aberto com sucesso. Usado so
+    // pra logar um aviso quando nao encontrado (ver
+    // apps/tvbox_esus_app.cpp) — PollButtonPress() ja falha em
+    // silencio/seguro (devolve kNone) mesmo sem chamar isto.
+    bool IsAvailable() const { return fd_ >= 0; }
+
     // Chamar uma vez por frame; nao bloqueia. Devolve o botao PRESSIONADO
     // neste ciclo (kNone se nao chegou nenhum evento novo). So dispara no
     // toque inicial — repeticao automatica do controle sendo segurado e
