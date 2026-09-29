@@ -45,6 +45,12 @@ constexpr int kDefaultSlideDurationSeconds = 10;
 // falha real.
 constexpr int kVideoLoadTimeoutSeconds = 30;
 
+// Quanto tempo o indicador de volume (ver include/remote_control.h e
+// include/ui.h::DrawVolumeOsd) fica substituindo o rodapé depois de
+// apertar VOL+/VOL-/MUTE no controle remoto, antes de voltar sozinho ao
+// conteúdo normal.
+constexpr float kVolumeOsdDurationSeconds = 2.0f;
+
 // Fonte de conteúdo: por autorização do dono do sistema (2026-09-26),
 // v1 usa uma lista FIXA de campanhas/vídeos (config/campaigns.conf),
 // carregada uma única vez na inicialização — sem ficar buscando a URL

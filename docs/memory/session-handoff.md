@@ -79,15 +79,59 @@ formato certo) e validado nesta sandbox: `ir-keytable -w
 falha depois com "No devices found", esperado — não tem hardware IR
 aqui).
 
-### Verificado de fato / o que falta
-`bash -n install.sh` passou (sintaxe). O parse do `.toml` corrigido foi
-validado com o binário real do `ir-keytable` extraído do `.deb`
-(nesta sandbox, sem hardware). **O que ainda NÃO foi confirmado**: a
-correção completa (flag + sintaxe) no dispositivo real — pedido pro
-usuário `git pull` + `./install.sh` de novo + reteste físico dos 4
-botões (POWER, VOL+, VOL-, MUTE). Também não acionei `poweroff`
-remotamente durante nenhum diagnóstico (destrutivo, desligaria o
-aparelho de verdade). Detalhe completo em [[known-issues]] item -6.
+### Segundo bug real, achado só depois do reteste no dispositivo
+Mesmo com a flag/sintaxe do `.toml` corrigidas, o usuário rodou
+`ir-keytable -t` de novo depois do `install.sh` atualizado e o POWER
+ainda só gerava `EV_MSC` (sem `EV_KEY`). Pedi pra aplicar o keymap na
+mão (`ir-keytable -w ... -s rc0`, bypassando o `udev` de propósito) —
+funcionou nesse teste manual, isolando o problema pro lado do `udev`,
+não do `.toml`. Causa: `udevadm trigger --subsystem-match=rc` (usado no
+`install.sh` pra aplicar sem esperar reboot) manda `ACTION=change` por
+padrão — a regra só escuta `ACTION=="add"`, então nunca disparava numa
+aplicação ao vivo (só dispararia de verdade no PRÓXIMO boot, quando o
+kernel gera o `add` genuíno). Corrigido: `udevadm trigger --action=add
+--subsystem-match=rc` em `install.sh`.
+
+### Confirmado de ponta a ponta no dispositivo real
+Usuário aplicou o keymap manualmente (`ir-keytable -w`), apertou POWER:
+"apertei power, funcionou e desligou" — cadeia completa validada
+(receptor → decodificação `necx` → keymap → `EV_KEY` → `triggerhappy`
+→ `poweroff` real).
+
+### Pedido novo na mesma sessão: indicador visual de volume
+Usuário perguntou se VOL+/VOL-/MUTE mostrariam algo na tela — não
+mostravam (implementação original era só `triggerhappy`+`amixer`,
+silenciosa). Perguntei se queria overlay separado ou o app desenhando
+ele mesmo; escolheu o app desenhar (mesmo estilo visual do resto do
+kiosk).
+
+Implementei `include/remote_control.h`/`src/remote_control.cpp` (lê
+`/dev/input` do receptor direto, acha o device certo por
+`/proc/bus/input/devices`/`gpio_ir_recv`, sem número de evento fixo) +
+`ui.h::DrawVolumeOsd` + fiação no loop principal
+(`apps/tvbox_esus_app.cpp`). Decisão de design importante: o indicador
+substitui o RODAPÉ, não a área do banner — a janela X11 do `mpv` cobre
+fisicamente o banner sempre que um vídeo toca (a maioria dos slides),
+então desenhar ali ficaria invisível quase sempre; o rodapé nunca é
+coberto pelo `mpv`. Removi as linhas de VOL+/VOL-/MUTE do
+`triggerhappy`/`install.sh` (e o script `tvbox-volume`) pra não
+duplicar o ajuste — agora só o app C++ mexe no `amixer` pra essas três
+teclas; `triggerhappy` cuida só do POWER.
+
+**Verificado nesta sandbox**: rebuild limpo (zero warnings no código
+novo), rodei o binário de verdade com `mpv` tocando vídeo real,
+screenshot confirmando rodapé normal (sem indicador — esperado, sem
+hardware IR aqui). `bash -n install.sh` validado de novo.
+
+### O que falta
+VOL+/VOL-/MUTE (e o novo indicador visual) não foram testados no
+dispositivo real ainda — pedido pro usuário `git pull` + recompilar
+(`make`, ou compilar no host e copiar o binário — ver README) +
+`./install.sh` de novo (pega a mudança no `triggerhappy`) + reteste
+físico, incluindo confirmar que o indicador aparece no rodapé mesmo com
+vídeo tocando. Também não confirmado se a regra `udev` do keymap aplica
+sozinha num boot real (sem intervenção manual) — só foi testada
+manualmente até agora. Detalhe completo em [[known-issues]] item -6.
 
 ---
 

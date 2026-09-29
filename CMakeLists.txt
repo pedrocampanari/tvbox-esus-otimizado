@@ -44,6 +44,7 @@ add_executable(${PROJECT_NAME}
   src/procexec.cpp
   src/campaign_store.cpp
   src/native_window.cpp
+  src/remote_control.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include

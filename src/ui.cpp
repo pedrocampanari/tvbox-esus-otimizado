@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #include "config.h"
@@ -264,6 +265,29 @@ void DrawLoadingSlide(Rectangle area, const Campaign &campaign, float elapsedSec
     float endAngle = startAngle + 270.0f;
     DrawRing({centerX, spinnerCenterY}, spinnerRadius * 0.7f, spinnerRadius, startAngle, endAngle,
              32, kColorTextAccent);
+}
+
+void DrawVolumeOsd(Rectangle area, int percent, bool muted, Color background, Color foreground) {
+    DrawRectangleRec(area, background);
+
+    std::string label = muted ? "VOLUME: MUDO" : ("VOLUME: " + std::to_string(percent) + "%");
+    float labelSize = Clamp(14.0f, 0.045f, 22.0f, area.width);
+    float barHeight = Clamp(5.0f, 0.018f, 9.0f, area.width);
+    float barWidth = std::clamp(area.width * 0.55f, 80.0f, 220.0f);
+
+    float blockHeight = labelSize + barHeight * 1.8f;
+    float y = area.y + (area.height - blockHeight) / 2.0f;
+    float centerX = area.x + area.width / 2.0f;
+
+    DrawCenteredText(BoldFont(), label.c_str(), labelSize, foreground, centerX, y);
+    y += labelSize * 1.35f;
+
+    Rectangle barBg = {centerX - barWidth / 2.0f, y, barWidth, barHeight};
+    DrawRectangleRounded(barBg, 0.5f, 6, Fade(foreground, 0.3f));
+    if (!muted && percent > 0) {
+        float filled = barWidth * std::clamp(percent / 100.0f, 0.0f, 1.0f);
+        DrawRectangleRounded({barBg.x, barBg.y, filled, barHeight}, 0.5f, 6, foreground);
+    }
 }
 
 } // namespace kiosk

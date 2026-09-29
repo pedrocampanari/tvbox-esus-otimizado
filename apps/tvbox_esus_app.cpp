@@ -18,6 +18,7 @@
 #include "native_window.h"
 #include "player.h"
 #include "procexec.h"
+#include "remote_control.h"
 #include "scraper.h"
 #include "ui.h"
 
@@ -122,6 +123,15 @@ int main() {
         TraceLog(LOG_WARNING, "VideoPlayer: nao foi possivel abrir o display X11; slides de video serao ignorados.");
     }
 
+    // Controle remoto (VOL+/VOL-/MUTE): so mostra o indicador se o
+    // receptor IR foi encontrado de verdade (ver
+    // include/remote_control.h). POWER continua fora do processo, via
+    // triggerhappy — ver docs/memory/known-issues.md item -6.
+    RemoteControl remote;
+    double volumeOsdUntil = 0.0;
+    int volumeOsdPercent = 0;
+    bool volumeOsdMuted = false;
+
     size_t currentIndex = 0;
     double slideStartTime = GetTime();
     std::string activeId;
@@ -193,6 +203,32 @@ int main() {
             currentIndex = (currentIndex + 1) % snapshot.size();
         }
 
+        RemoteButton remoteButton = remote.PollButtonPress();
+        if (remoteButton != RemoteButton::kNone) {
+            int newPercent = 0;
+            bool newMuted = false;
+            bool adjusted = false;
+            switch (remoteButton) {
+                case RemoteButton::kVolumeUp:
+                    adjusted = AdjustVolume(+5, false, newPercent, newMuted);
+                    break;
+                case RemoteButton::kVolumeDown:
+                    adjusted = AdjustVolume(-5, false, newPercent, newMuted);
+                    break;
+                case RemoteButton::kMute:
+                    adjusted = AdjustVolume(0, true, newPercent, newMuted);
+                    break;
+                default:
+                    break;
+            }
+            if (adjusted) {
+                volumeOsdPercent = newPercent;
+                volumeOsdMuted = newMuted;
+                volumeOsdUntil = GetTime() + kVolumeOsdDurationSeconds;
+            }
+        }
+        bool showVolumeOsd = GetTime() < volumeOsdUntil;
+
         int screenW = GetScreenWidth();
         int screenH = GetScreenHeight();
         float headerHeight = std::clamp(screenH * 0.08f, 32.0f, 90.0f);
@@ -215,8 +251,13 @@ int main() {
         ClearBackground(kColorAppBackground);
         DrawChromeBar(headerRect, kHeaderTitle, kHeaderSubtitle, kColorHeaderBackground,
                       kColorChromeText);
-        DrawChromeBar(footerRect, kFooterTitle, kFooterSubtitle, kColorFooterBackground,
-                      kColorChromeText);
+        if (showVolumeOsd) {
+            DrawVolumeOsd(footerRect, volumeOsdPercent, volumeOsdMuted, kColorFooterBackground,
+                          kColorChromeText);
+        } else {
+            DrawChromeBar(footerRect, kFooterTitle, kFooterSubtitle, kColorFooterBackground,
+                          kColorChromeText);
+        }
 
         switch (activeType) {
             case CampaignType::Texto:

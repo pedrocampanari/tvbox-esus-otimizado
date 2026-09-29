@@ -1,6 +1,6 @@
 # Problemas e decisões em aberto conhecidas
 
-## -6. Controle remoto IR do hardware não fazia nada — RESOLVIDO em 2026-09-27 (POWER/VOL+/VOL-/MUTE confirmados no dispositivo real)
+## -6. Controle remoto IR do hardware não fazia nada — RESOLVIDO em 2026-09-27 (POWER confirmado desligando de verdade no dispositivo real; VOL+/VOL-/MUTE aguardando reteste)
 Pedido do usuário: "preciso reabilitar o controle remoto que veio com o
 hardware". Não é regressão nossa — o Armbian genérico nunca tinha esse
 suporte configurado (o firmware Android original do box trazia isso
@@ -88,6 +88,26 @@ apertar o controle) **ainda não foi testada após o `git pull` +
 confirmar. Testar `poweroff` de propósito desliga o aparelho de
 verdade, então não foi acionado remotamente durante o diagnóstico.
 
+**Confirmado de ponta a ponta no dispositivo real**: usuário aplicou o
+keymap corrigido na mão (`ir-keytable -w ... -s rc0`, bypassando o
+`udev` de propósito pra isolar o teste), apertou POWER e reportou:
+"apertei power, funcionou e desligou" — `triggerhappy` capturou o
+`KEY_POWER`, disparou `/usr/sbin/poweroff`, e o sistema desligou de
+verdade. Cadeia inteira validada: receptor → decodificação `necx` →
+keymap → `EV_KEY` → `triggerhappy` → `poweroff`.
+
+**Ainda não testado nesta rodada**: VOL+/VOL-/MUTE (o dispositivo
+desligou antes de chegar a testar esses três) e se a regra `udev`
+aplica o keymap sozinha num boot real (o teste que funcionou foi manual
+via `-w`, bypassando o `udev` de propósito pra isolar se o problema era
+o `.toml`/flag ou o `udev` em si — ver histórico de bugs corrigidos
+nesta mesma sessão logo abaixo). Como o boot real gera um evento
+`ACTION=="add"` genuíno quando o kernel cria `rc0` (diferente da
+simulação manual via `udevadm trigger`, que manda `change` por padrão
+— bug também corrigido nesta sessão), a expectativa é que funcione
+sozinho sem intervenção manual, mas isso precisa ser confirmado no
+próximo boot depois de religar da tomada.
+
 **O que ficou fora do escopo, documentado mas não implementado**: os
 outros botões do controle (setas, OK, voltar, números) foram
 capturados no log bruto mas não mapeados — o usuário optou por só
@@ -96,6 +116,57 @@ manual de slides (hoje é 100% automático por `duracao_segundos`, ver
 [[architecture]]), esses scancodes extras já estão registrados na
 sessão e podem ser adicionados ao mesmo `.toml` sem precisar recapturar
 nada.
+
+### Adendo (mesma sessão): indicador visual de volume, integrado ao app C++
+Depois de confirmar POWER funcionando, o usuário perguntou se
+VOL+/VOL-/MUTE mostrariam algo na tela — não mostravam (implementação
+original era 100% `triggerhappy`+`amixer`, sem UI nenhuma). Perguntei se
+queria um overlay separado ou o próprio app Raylib desenhando; usuário
+escolheu o app desenhar ele mesmo, no mesmo estilo visual do resto do
+kiosk.
+
+**Implementado**: novo módulo `include/remote_control.h`/
+`src/remote_control.cpp` — lê `/dev/input/eventN` do receptor
+diretamente (acha o device certo varrendo `/proc/bus/input/devices` por
+`gpio_ir_recv`, sem assumir número fixo), sem depender de
+`triggerhappy`/`raylib.h`/`Xlib.h` (mesma regra de isolamento de headers
+do `player.cpp`, ver [[architecture]]). `apps/tvbox_esus_app.cpp` faz
+`PollButtonPress()` uma vez por frame; ao detectar VOL+/VOL-/MUTE, ajusta
+o volume via `amixer` (fork/exec) e ativa `ui.h::DrawVolumeOsd` por
+`kVolumeOsdDurationSeconds` (2s, `config.h`).
+
+**Decisão de posicionamento que evitou um bug de UX antes de escrever
+qualquer código**: o indicador NÃO pode ser desenhado na área do
+banner — a janela X11 do `mpv` (filha da janela do Raylib) fica
+posicionada exatamente ali sempre que um vídeo está tocando, e cobriria
+fisicamente qualquer coisa que o Raylib desenhasse embaixo, na tela
+real (não é um bug de código, é como composição de janelas X11
+funciona — mesma categoria de limitação já documentada no item 5 sobre
+o `mpv --wid`). Como a maioria dos slides de `campaigns.conf` é vídeo,
+um indicador ali ficaria invisível quase sempre. Corrigido desenhando
+sobre o **rodapé** em vez do banner — área que o Raylib sempre controla
+sozinho, nunca coberta pelo `mpv`.
+
+**Removido de `install.sh`/`triggerhappy` nesta mesma mudança**: as
+linhas de `KEY_VOLUMEUP`/`KEY_VOLUMEDOWN`/`KEY_MUTE` e o script
+`/usr/local/bin/tvbox-volume` — como o app C++ agora lê o mesmo
+`/dev/input` e já ajusta o `amixer` sozinho, deixar o `triggerhappy`
+reagindo às mesmas teclas duplicaria o ajuste (dois processos mexendo
+no mesmo mixer pro mesmo toque). `KEY_POWER` continua só no
+`triggerhappy` (não precisa de feedback visual, e um desligamento real
+fica mais robusto fora do processo principal do kiosk).
+
+**Verificado nesta sandbox (sem hardware IR real aqui)**: `cmake
+--build` limpo, zero warnings no código novo. Rodei o binário de
+verdade com `mpv` tocando um vídeo real — capturei screenshot
+confirmando que o rodapé continua normal (sem indicador, como esperado:
+`RemoteControl` não encontra `gpio_ir_recv` nesta sandbox x86_64, então
+`PollButtonPress()` sempre devolve `kNone` e o rodapé nunca troca).
+**Não testado no dispositivo real ainda**: pedido pro usuário `git
+pull` + rebuild (`make` no dispositivo, ou compilar no host e copiar o
+binário — ver README) + `./install.sh` de novo (pra aplicar a mudança
+no `triggerhappy`) + reteste físico de VOL+/VOL-/MUTE, incluindo
+confirmar que o indicador aparece no rodapé mesmo com um vídeo tocando.
 
 ## -5. Vídeo ficava preto pra sempre SÓ no RK3229 real, depois da animação de loading ser adicionada — RESOLVIDO em 2026-09-27 (correção teórica; aguardando confirmação no hardware real)
 Usuário confirmou o regressivo mais direto desta sessão toda: "Mas

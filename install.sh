@@ -125,43 +125,25 @@ $SUDO tee /etc/udev/rules.d/99-tvbox-ir-remote.rules > /dev/null <<'UDEV'
 ACTION=="add", SUBSYSTEM=="rc", KERNEL=="rc[0-9]*", RUN+="/usr/bin/ir-keytable -w /etc/rc_keymaps/rc-rk322x-tvbox.toml -s $kernel"
 UDEV
 $SUDO udevadm control --reload-rules
-$SUDO udevadm trigger --subsystem-match=rc
+# --action=add é obrigatório aqui: sem essa flag o udevadm trigger manda
+# ACTION=change por padrão, que a regra acima (ACTION=="add") ignora —
+# nesse caso o keymap só seria aplicado no PRÓXIMO boot (quando o kernel
+# de fato cria rc0 do zero), nunca imediatamente após instalar a regra.
+$SUDO udevadm trigger --action=add --subsystem-match=rc
 
 # triggerhappy: daemon minúsculo (não precisa de X, não precisa de
-# desktop) que converte eventos de tecla (agora gerados pelo keymap
-# acima) em comandos reais. Alternativa mais pesada seria escutar
-# /dev/input diretamente dentro do app C++, mas o controle remoto não é
-# parte da UI do kiosk (não navega slides) — é controle de energia/som
-# do aparelho, então fica fora do binário principal.
-log "Configurando triggerhappy (POWER = poweroff; VOL+/VOL-/MUTE = ALSA)"
-$SUDO tee /usr/local/bin/tvbox-volume > /dev/null <<'SH'
-#!/usr/bin/env bash
-# Ajusta o primeiro mixer ALSA disponível. Detecta o nome do controle em
-# vez de assumir "Master" porque a saída de áudio deste hardware é via
-# HDMI (snd_soc_hdmi_codec) e o nome do controle simples varia por board
-# — alguns nem expõem controle de volume por software (TV controla o
-# volume nesse caso), então falha em silêncio (log, não erro) se não
-# houver nenhum.
-set -euo pipefail
-control="$(amixer scontrols 2>/dev/null | head -n1 | sed -E "s/^Simple mixer control '([^']+)'.*/\1/")"
-if [ -z "$control" ]; then
-  logger -t tvbox-volume "nenhum mixer ALSA encontrado (provável saída HDMI sem volume por software) — ignorando"
-  exit 0
-fi
-case "$1" in
-  up)     amixer -q sset "$control" 5%+ ;;
-  down)   amixer -q sset "$control" 5%- ;;
-  toggle) amixer -q sset "$control" toggle ;;
-esac
-SH
-$SUDO chmod +x /usr/local/bin/tvbox-volume
-
+# desktop) que converte KEY_POWER em poweroff real. VOL+/VOL-/MUTE NÃO
+# ficam aqui: o próprio binário C++ lê /dev/input diretamente (ver
+# include/remote_control.h) pra poder desenhar o indicador de volume no
+# rodapé, e ele mesmo chama o `amixer` — deixar o triggerhappy reagindo
+# a essas teclas TAMBÉM duplicaria o ajuste (dois processos mexendo no
+# mesmo mixer pro mesmo toque de botão). POWER continua aqui de
+# propósito: um desligamento real não precisa de feedback visual, e fica
+# mais robusto ficar fora do processo principal do kiosk.
+log "Configurando triggerhappy (POWER = poweroff)"
 $SUDO mkdir -p /etc/triggerhappy/triggers.d
 $SUDO tee /etc/triggerhappy/triggers.d/tvbox-remote.conf > /dev/null <<'THD'
-KEY_POWER      1  /usr/sbin/poweroff
-KEY_VOLUMEUP   1  /usr/local/bin/tvbox-volume up
-KEY_VOLUMEDOWN 1  /usr/local/bin/tvbox-volume down
-KEY_MUTE       1  /usr/local/bin/tvbox-volume toggle
+KEY_POWER 1 /usr/sbin/poweroff
 THD
 $SUDO systemctl enable --now triggerhappy
 

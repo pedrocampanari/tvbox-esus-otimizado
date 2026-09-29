@@ -182,20 +182,48 @@ de ancoragem da janela principal não afeta o posicionamento do vídeo.
   invoca é o próprio `mpv` — via `ytdl_hook` — só quando o vídeo não é
   um arquivo direto, e não fica residente).
 
-## Controle remoto IR (fora do binário C++)
+## Controle remoto IR
 O receptor IR já vem embutido no hardware e é reconhecido de fábrica
 pelo kernel/device-tree do RK3229 (`gpio_ir_recv` + decodificador NEC,
 confirmado via `dmesg` num dispositivo real) — o que faltava era só um
 keymap (tradução scancode→tecla), inexistente na imagem Armbian
-genérica. Como o controle remoto aqui só liga/desliga o aparelho e mexe
-no volume (não navega slides — o slideshow é 100% automático por
-`duracao_segundos`), essa habilitação fica inteiramente em `install.sh`
-(keymap em `/etc/rc_keymaps/`, regra `udev` própria, `triggerhappy`
-convertendo tecla→comando), **fora do processo `tvbox_esus_app`**. Se
-algum dia o app ganhar navegação manual por controle, aí sim faria
-sentido o binário ler `/dev/input` diretamente — não implementado por
-não ser necessário agora. Detalhe completo (scancodes, decisões sobre o
-botão POWER, script de volume) em [[known-issues]] item -6.
+genérica. Habilitação de baixo nível (keymap em `/etc/rc_keymaps/`,
+regra `udev` própria pra carregá-lo, `ir-keytable`) fica em
+`install.sh`. Detalhe completo (scancodes, formato do `.toml`, bugs
+reais corrigidos no caminho) em [[known-issues]] item -6.
+
+Duas teclas são tratadas em lugares diferentes, por decisão deliberada:
+- **`KEY_POWER`** → `triggerhappy` (daemon de sistema, fora do
+  `tvbox_esus_app`) chama `/usr/sbin/poweroff` direto. Fica fora do
+  processo principal de propósito: um desligamento real não precisa de
+  feedback visual, e um daemon de sistema independente é mais robusto
+  pra essa ação específica (continua funcionando mesmo que o app
+  trave/reinicie).
+- **`KEY_VOLUMEUP`/`KEY_VOLUMEDOWN`/`KEY_MUTE`** → lidas DENTRO do
+  `tvbox_esus_app` (`include/remote_control.h`/`src/remote_control.cpp`),
+  que abre `/dev/input/eventN` do receptor diretamente (acha o device
+  certo varrendo `/proc/bus/input/devices` pelo nome do driver
+  `gpio_ir_recv` — não assume um número de `eventN` fixo, que muda
+  conforme a ordem de enumeração a cada boot) e ajusta o volume via
+  `amixer` (fork/exec pontual, mesmo princípio de "processo em vez de
+  lib" usado pra curl/mpv — sem linkar libasound). Motivo de ficar
+  DENTRO do processo, ao contrário do POWER: o pedido era mostrar um
+  indicador visual de volume no mesmo estilo do resto do kiosk
+  (`ui.h::DrawVolumeOsd`), e só o processo Raylib pode desenhar isso.
+  **Nunca deixar o `triggerhappy` reagir a essas três teclas também** —
+  duplicaria o ajuste (dois processos mexendo no mesmo mixer pro mesmo
+  toque de botão).
+
+**Onde o indicador é desenhado, e por quê**: `DrawVolumeOsd` substitui
+temporariamente o RODAPÉ (`kVolumeOsdDurationSeconds`, `config.h`) —
+nunca a área do banner. A janela de vídeo do `mpv` é filha real da
+janela do Raylib e fica posicionada exatamente sobre o banner sempre
+que um slide de vídeo está tocando (ver módulo `player` abaixo);
+qualquer coisa desenhada pelo Raylib nessa área ficaria fisicamente
+coberta pela janela do `mpv` na tela real, mesmo que o código de desenho
+rode normalmente (o problema é de composição de janelas X11, não do
+código). Header/footer, ao contrário, nunca são cobertos pelo `mpv`
+(ele só ocupa a `bannerRect`) — por isso o indicador usa o rodapé.
 
 ## Build
 - `CMakeLists.txt` é o build system canônico (já resolve a dependência do

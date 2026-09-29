@@ -42,6 +42,16 @@ void DrawVideoPlaceholder(Rectangle area);
 // próprio.
 void DrawLoadingSlide(Rectangle area, const Campaign &campaign, float elapsedSeconds);
 
+// Desenha o indicador de volume (percentual + barra, ou "MUDO"), usado
+// ao reagir a VOL+/VOL-/MUTE do controle remoto (ver
+// include/remote_control.h). Pensado pra substituir temporariamente o
+// conteúdo de `DrawChromeBar` (header/footer) durante
+// kVolumeOsdDurationSeconds — nunca a área do banner, que fica coberta
+// pela janela X11 do mpv sempre que um vídeo está tocando (ver
+// include/player.h), o que esconderia o indicador na maior parte do
+// tempo.
+void DrawVolumeOsd(Rectangle area, int percent, bool muted, Color background, Color foreground);
+
 } // namespace kiosk
 
 #endif // TVBOX_UI_H
