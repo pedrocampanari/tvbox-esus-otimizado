@@ -1,5 +1,33 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-30 (parte 23) — "resolva os bugs em known-issues.md"
+
+Revisei todos os itens. Resolvidos agora, tudo testado no RK3229 via SSH:
+- **-9 (yt-dlp sem runtime JS)**: `quickjs` + `yt-dlp-ejs` +
+  `/etc/yt-dlp.conf`; timer semanal de atualização do yt-dlp (o
+  `yt-dlp -U` recomendado antes não funciona com pip).
+- **-10 (novo): kiosk não subia sozinho no boot** — achado revisando o
+  estado do dispositivo (nenhum autologin/`startx` automático, contra o
+  requisito principal do projeto). Autologin tty1 + `.xinitrc` +
+  `.profile` → `startx -- -nocursor`, tudo pelo `install.sh`.
+- `install.sh` abortava com 141 (SIGPIPE + pipefail) na verificação —
+  corrigido; o `install.sh` novo rodou inteiro no dispositivo (rc=0).
+- **Boot real** (pendência das partes 21/22): kiosk subiu sozinho em
+  ~20s, volume restaurado (70%), vídeo do cache do boot anterior tocando
+  na hora e refresh do cache em segundo plano (`boot_id` novo).
+- -5 e -6/-8 com status atualizado (confirmados no hardware; falta só
+  o controle físico/som audível).
+
+**Não resolvível por mim**: -7 (WiFi onboard: bug de hardware/driver,
+testado na parte 22 → dongle USB) e 2/6 (fonte dinâmica de dados:
+depende do dono do sistema autorizar o uso da API/chave do Supabase —
+decisão externa, ver item 2).
+
+Dispositivo: `install.sh` novo copiado e executado; docs copiados. O
+resto do working tree lá já batia com o commit `455909d`.
+
+---
+
 ## Sessão de 2026-09-30 (parte 22) — driver WiFi `ssv6x5x` testado no dispositivo: não funciona, revertido
 
 Usuário pediu pra rodar os comandos do item -7 de [[known-issues]].

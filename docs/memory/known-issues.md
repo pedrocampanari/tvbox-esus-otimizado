@@ -1,19 +1,42 @@
 # Problemas e decisões em aberto conhecidas
 
-## -9. `yt-dlp` sem runtime JavaScript no dispositivo — EM ABERTO (funciona hoje, risco futuro)
-Visto rodando o `yt-dlp` à mão no RK3229 em 2026-09-29: `WARNING:
-[youtube] No supported JavaScript runtime could be found ... YouTube
-extraction without a JS runtime has been deprecated, and some formats
-may be missing`. Hoje os 10 vídeos baixam normalmente em H.264 (cache
-e streaming), mas o YouTube vem exigindo JS pra decifrar formatos — é
-provável que um dia pare de funcionar sem runtime. Opções (não
-aplicadas, custam disco/decisão): instalar `deno` (padrão do yt-dlp) ou
-`nodejs` do apt + `--js-runtimes node` (teria que entrar nos argumentos
-do `src/video_cache.cpp` e do `ytdl_hook` em `src/player.cpp`).
-Mitigação já existente: o cache mantém os vídeos do boot anterior se o
-download falhar, então uma quebra do yt-dlp não apaga a tela.
+## -10. Kiosk não subia sozinho ao ligar (exigia `startx` manual) — RESOLVIDO em 2026-09-30 (boot real testado no dispositivo)
+Requisito do projeto: "ao ligar na tomada, aparece o binário". Visto no
+dispositivo depois de um reboot: nenhum autologin, nenhum `startx`
+automático — ficava no prompt de login do console (o X que eu via antes
+era aberto à mão pelo usuário no tty2). `install.sh` agora configura:
+1. `/etc/systemd/system/getty@tty1.service.d/tvbox-autologin.conf`
+   (autologin do usuário que rodou o `install.sh` — `root` no
+   dispositivo);
+2. `~/.xinitrc` → `exec <repo>/exec.sh`;
+3. bloco marcado em `~/.profile`: login no **tty1** sem `$DISPLAY` →
+   `exec startx -- -nocursor`. Se o X cair, o getty loga de novo e o X
+   volta. SSH e outros ttys não são afetados.
+**Testado com reboot real**: Xorg (`-nocursor vt1`) + app + mpv de pé
+~20s depois do boot, painel do Chromium carregado, vídeo tocando do
+cache.
 
-## -8. Controle remoto VOL+/VOL-/MUTE nunca ajustavam nada: nenhum mixer ALSA — RESOLVIDO em 2026-09-29 (testado no dispositivo)
+Bug achado no caminho: o `install.sh` abortava com código 141 no bloco
+de verificação (`set -o pipefail` + `mpv --version | head -1` → SIGPIPE
+no mpv). Todos os `| head -1` da verificação viraram `| sed -n 1p`.
+
+## -9. `yt-dlp` sem runtime JavaScript — RESOLVIDO em 2026-09-30 (quickjs, testado no dispositivo)
+Aviso visto no RK3229: `No supported JavaScript runtime could be found
+... some formats may be missing`. `deno` (padrão do yt-dlp) não tem
+build armv7; `nodejs` do apt puxaria ~12 pacotes (libicu + libnode,
+~80MB). Adotado **`quickjs`** (pacote de 1,2MB, suportado oficialmente
+pelo yt-dlp) + `yt-dlp-ejs` via pip (o extra `yt-dlp[default]` falha no
+armv7: `brotli` sem wheel). `/etc/yt-dlp.conf` com `--js-runtimes
+quickjs` vale pro cache de vídeos e pro `ytdl_hook` do mpv. Medido no
+dispositivo: extração em ~9s com e sem quickjs, mesmo formato H.264,
+aviso sumiu, `-v` mostra `JS runtimes: quickjs-2025-04-26`.
+
+Junto: `yt-dlp -U` (que o `install.sh` recomendava) não funciona com
+instalação via pip. Substituído por `tvbox-ytdlp-update.timer`
+(domingo 03:30, `pip3 install --user --upgrade yt-dlp yt-dlp-ejs`,
+`Nice=19`). Serviço executado uma vez no dispositivo com sucesso.
+
+## -8. Controle remoto VOL+/VOL-/MUTE nunca ajustavam nada: nenhum mixer ALSA — RESOLVIDO em 2026-09-29 (testado no dispositivo; restauração do volume confirmada em boot real em 2026-09-30)
 Diagnóstico via SSH no RK3229: `amixer -c 0|1|2 scontrols` vazio nas
 três placas (analog, SPDIF, HDMI) — o HDMI deste SoC não tem volume em
 hardware. `AdjustVolume()` falhava sempre (e o aviso nem aparecia no
@@ -40,7 +63,9 @@ Particularidades:
 Testado no dispositivo injetando `EV_KEY` em `/dev/input/event0`
 (mesmo caminho do receptor IR): VOL- 100→90%, MUTE →0%, MUTE →90%,
 VOL+ →100%, indicador no rodapé confirmado por captura de frames.
-Não testado ainda: o controle físico de verdade e o som audível na TV.
+Em 2026-09-30, boot real: volume deixado em 70% antes de reiniciar voltou
+em 70% (`exec.sh` cria o "Master" e faz `alsactl restore`). Ainda não
+testado: o controle físico de verdade e o som audível na TV.
 
 ## -7. WiFi onboard (SSV6051) não funciona sob Armbian — driver `ssv6x5x` TESTADO em 2026-09-30 e DESCARTADO; caminho: dongle USB
 
@@ -153,7 +178,7 @@ nesta sessão — pedido pro usuário `git pull` + `./install.sh` de novo
 Realtek/Ralink/Atheros/MediaTek + seguir as instruções impressas no
 fim do `install.sh` pra configurar a rede.
 
-## -6. Controle remoto IR do hardware não fazia nada — RESOLVIDO em 2026-09-27 (POWER confirmado desligando de verdade no dispositivo real; VOL+/VOL-/MUTE aguardando reteste)
+## -6. Controle remoto IR do hardware não fazia nada — RESOLVIDO em 2026-09-27 (POWER confirmado no dispositivo real; VOL+/VOL-/MUTE confirmados por injeção de evento em 2026-09-29, ver item -8 — falta só o controle físico)
 Pedido do usuário: "preciso reabilitar o controle remoto que veio com o
 hardware". Não é regressão nossa — o Armbian genérico nunca tinha esse
 suporte configurado (o firmware Android original do box trazia isso
@@ -321,7 +346,12 @@ binário — ver README) + `./install.sh` de novo (pra aplicar a mudança
 no `triggerhappy`) + reteste físico de VOL+/VOL-/MUTE, incluindo
 confirmar que o indicador aparece no rodapé mesmo com um vídeo tocando.
 
-## -5. Vídeo ficava preto pra sempre SÓ no RK3229 real, depois da animação de loading ser adicionada — RESOLVIDO em 2026-09-27 (correção teórica; aguardando confirmação no hardware real)
+## -5. Vídeo ficava preto pra sempre SÓ no RK3229 real, depois da animação de loading ser adicionada — RESOLVIDO e CONFIRMADO no hardware real (2026-09-29/30)
+**Confirmação (2026-09-29/30, via SSH)**: vídeos tocando de verdade no
+RK3229 com a detecção por `playback-restart`, vistos em screenshots da
+tela real (`ffmpeg -f x11grab`), tanto por streaming quanto do cache
+local, e depois de um boot real.
+
 Usuário confirmou o regressivo mais direto desta sessão toda: "Mas
 estava funcionando, foi depois de adicionar o loading" — ou seja, o
 vídeo tocava certinho ANTES da parte 13 (animação de carregamento +

@@ -81,30 +81,30 @@ Armbian, sem fix disponível; ver item -7 do mesmo arquivo).
 
 ⚠️ `yt-dlp` **nunca** via `apt` — o pacote do Debian trava numa versão
 antiga que para de funcionar contra o YouTube. O script instala via
-`pip3 install --user`. Ver `docs/memory/known-issues.md` item 5.
+`pip3 install --user` (com `yt-dlp-ejs` + `quickjs` como runtime
+JavaScript) e um timer semanal (`tvbox-ytdlp-update.timer`) mantém
+atualizado. Ver `docs/memory/known-issues.md` itens 5 e -9.
 
 ### Rodar em modo kiosk (sem ambiente de desktop)
 
+O `install.sh` já deixa tudo pronto pra "ligou na tomada, aparece o
+kiosk": autologin no tty1 → `~/.profile` roda `startx -- -nocursor` →
+`~/.xinitrc` → `exec.sh`. Basta reiniciar. SSH e outros ttys continuam
+com login normal. Ver `docs/memory/known-issues.md` item -10.
+
 `exec.sh` cuida de entrar no diretório certo (pros caminhos relativos
 de `assets/`/`config/` funcionarem), desligar blank/DPMS/screensaver do
-X, reiniciar o app sozinho se ele cair, **e subir o Chromium em modo
-app** (sem barra de endereço/abas) mostrando o painel institucional nos
-outros 75% da tela (o app de vídeo fica ancorado nos 25% da direita —
-ver `kAnchorWindowToRightEdge` em `include/config.h`). Aponte o
-`~/.xinitrc` pra ele:
+X, restaurar o volume salvo, reiniciar o app sozinho se ele cair, **e
+subir o Chromium em modo app** (sem barra de endereço/abas) mostrando o
+painel institucional nos outros 75% da tela (o app de vídeo fica
+ancorado nos 25% da direita — ver `kAnchorWindowToRightEdge` em
+`include/config.h`).
 
-```sh
-echo 'exec /caminho/completo/para/tvbox-esus-otimizado/exec.sh' > ~/.xinitrc
-chmod +x ~/.xinitrc
-startx
-```
-
-**Painel institucional (Chromium)**: URL fixa em `exec.sh`
-(`PANEL_URL`), pode ser sobrescrita sem editar o script:
-```sh
-PANEL_URL="https://outra.url/painel" startx
-```
-Pra desligar o painel e rodar só o vídeo:
+**Painel institucional (Chromium)**: URL em `exec.sh` (`PANEL_URL`).
+Pra trocar a URL ou desligar o painel (`PANEL_ENABLED=0`, só vídeo),
+edite os valores padrão no topo do `exec.sh` — com o início automático
+não há onde passar variável de ambiente. Num teste manual (`startx`
+num tty que não seja o tty1) as variáveis continuam funcionando:
 ```sh
 PANEL_ENABLED=0 startx
 ```
@@ -155,7 +155,6 @@ do dispositivo, em segundo plano, sempre o próximo da rotação) e
 tocados pelo `mpv` embutido como janela filha; cada vídeo é exibido
 inteiro antes de passar ao próximo slide. Ver
 [`docs/memory/architecture.md`](docs/memory/architecture.md) > "Cache de
-vídeos". Pendências reais: WiFi onboard quebrado (só com dongle USB,
-item -7) e
-`yt-dlp` sem runtime JavaScript (item -9) em
-[`docs/memory/known-issues.md`](docs/memory/known-issues.md).
+vídeos". O kiosk sobe sozinho ao ligar. Pendência real: WiFi onboard
+quebrado (só com dongle USB, item -7 de
+[`docs/memory/known-issues.md`](docs/memory/known-issues.md)).

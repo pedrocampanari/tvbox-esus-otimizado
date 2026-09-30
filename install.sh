@@ -53,6 +53,7 @@ $SUDO apt install -y \
   unclutter-xfixes \
   mpv \
   ffmpeg \
+  quickjs \
   curl \
   python3 \
   python3-pip \
@@ -78,8 +79,57 @@ fi
 # simplesmente para de funcionar contra o YouTube (confirmado testando
 # de verdade — ver docs/memory/known-issues.md item 5). Instala via pip
 # --user, sem venv, sem mexer em pacotes do sistema.
-log "Instalando/atualizando yt-dlp via pip (nunca via apt)"
-pip3 install --user --upgrade --break-system-packages yt-dlp
+#
+# yt-dlp-ejs + quickjs: o YouTube passou a exigir um runtime JavaScript
+# pra decifrar os formatos ("No supported JavaScript runtime could be
+# found ... some formats may be missing"). deno (o padrão do yt-dlp) não
+# tem build pra armv7, e nodejs puxaria ~80MB (libicu + libnode);
+# quickjs é 1,2MB e, medido no RK3229, extrai no mesmo tempo (~9s). Só
+# o pacote yt-dlp-ejs (Python puro) — o extra "yt-dlp[default]" falha
+# no armv7 (brotli sem wheel). Ver docs/memory/known-issues.md item -9.
+log "Instalando/atualizando yt-dlp + yt-dlp-ejs via pip (nunca via apt)"
+pip3 install --user --upgrade --break-system-packages yt-dlp yt-dlp-ejs
+
+# Config de sistema: vale pro cache de vídeos E pro ytdl_hook do mpv.
+log "Configurando yt-dlp pra usar quickjs como runtime JavaScript"
+$SUDO tee /etc/yt-dlp.conf > /dev/null <<'YTDLP'
+# TV Box e-SUS: runtime JS pro YouTube (install.sh; ver docs/memory/known-issues.md item -9)
+--js-runtimes quickjs
+YTDLP
+
+# yt-dlp desatualizado para de funcionar contra o YouTube (item 5 de
+# known-issues). `yt-dlp -U` não serve pra instalação via pip — um timer
+# semanal atualiza pelo pip, de madrugada (downloads do cache só
+# acontecem logo após o boot, então não há disputa).
+log "Instalando timer semanal de atualização do yt-dlp"
+YTDLP_HOME="$HOME"
+$SUDO tee /etc/systemd/system/tvbox-ytdlp-update.service > /dev/null <<UNIT
+[Unit]
+Description=TV Box e-SUS: atualiza yt-dlp e yt-dlp-ejs via pip
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=$(id -un)
+Environment=HOME=$YTDLP_HOME
+Nice=19
+ExecStart=/usr/bin/pip3 install --user --upgrade --break-system-packages yt-dlp yt-dlp-ejs
+UNIT
+$SUDO tee /etc/systemd/system/tvbox-ytdlp-update.timer > /dev/null <<'UNIT'
+[Unit]
+Description=TV Box e-SUS: atualização semanal do yt-dlp
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable --now tvbox-ytdlp-update.timer
 
 # Kiosk fechado não pode mostrar NENHUMA mensagem/barra do próprio
 # Chromium (aviso de tradução automática, aviso de flag de linha de
@@ -249,22 +299,59 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$LOCAL_BIN"; then
   echo "'source ~/.bashrc') pra isso valer em sessões futuras."
 fi
 
+# Kiosk: "ligou na tomada, aparece o app" (requisito do projeto). Até
+# 2026-09-30 nada disso existia — depois de um boot o dispositivo ficava
+# no login do console e alguém tinha que rodar `startx` na mão.
+#   1. autologin no tty1 (override do getty@tty1);
+#   2. ~/.xinitrc -> exec.sh deste diretório;
+#   3. ~/.profile: login no tty1 sem X rodando -> `exec startx`. Se o X
+#      cair, o shell sai, o getty loga de novo e o X sobe outra vez.
+#      Logins por SSH ou em outro tty não são afetados.
+# `-nocursor` esconde o cursor no próprio Xorg (o unclutter do exec.sh
+# vira só redundância).
+KIOSK_USER="$(id -un)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+log "Configurando início automático do kiosk (autologin tty1 + startx) para '$KIOSK_USER'"
+$SUDO mkdir -p /etc/systemd/system/getty@tty1.service.d
+$SUDO tee /etc/systemd/system/getty@tty1.service.d/tvbox-autologin.conf > /dev/null <<GETTY
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin $KIOSK_USER --noclear %I \$TERM
+GETTY
+$SUDO systemctl daemon-reload
+
+printf 'exec %s/exec.sh\n' "$SCRIPT_DIR" > "$HOME/.xinitrc"
+chmod +x "$HOME/.xinitrc"
+
+if ! grep -qF '>>> tvbox-esus kiosk >>>' "$HOME/.profile" 2>/dev/null; then
+  cat >> "$HOME/.profile" <<'PROFILE'
+
+# >>> tvbox-esus kiosk >>> (install.sh — sobe o kiosk ao ligar)
+if [ -z "${DISPLAY:-}" ] && [ "$(tty)" = /dev/tty1 ]; then
+  exec startx -- -nocursor >/dev/null 2>&1
+fi
+# <<< tvbox-esus kiosk <<<
+PROFILE
+fi
+
 log "Verificação"
-echo -n "mpv:      "; mpv --version | head -1
+echo -n "mpv:      "; mpv --version | sed -n 1p
 echo -n "yt-dlp:   "; "$LOCAL_BIN/yt-dlp" --version
-echo -n "curl:     "; curl --version | head -1
+echo -n "curl:     "; curl --version | sed -n 1p
 echo -n "chromium: "; (command -v chromium || command -v chromium-browser) >/dev/null 2>&1 \
   && (chromium --version 2>/dev/null || chromium-browser --version 2>/dev/null) \
   || echo "não encontrado"
 if [ "$WITH_BUILD_DEPS" = true ]; then
-  echo -n "cmake:  "; cmake --version | head -1
-  echo -n "g++:    "; g++ --version | head -1
+  echo -n "cmake:  "; cmake --version | sed -n 1p
+  echo -n "g++:    "; g++ --version | sed -n 1p
 fi
 echo -n "controle remoto (rc0): "
 if [ -e /sys/class/rc/rc0 ]; then echo "detectado"; else echo "NÃO detectado (ver docs/memory/known-issues.md)"; fi
 echo -n "triggerhappy:          "; systemctl is-active triggerhappy 2>/dev/null || echo "inativo"
+echo -n "runtime JS (yt-dlp):   "; "$LOCAL_BIN/yt-dlp" -v --simulate --no-warnings "https://www.youtube.com/watch?v=rx-MuBPAWPM" 2>&1 | grep -o "JS runtimes: .*" | sed -n 1p || echo "NÃO detectado (ver known-issues item -9)"
+echo -n "autostart (tty1):      "; [ -f /etc/systemd/system/getty@tty1.service.d/tvbox-autologin.conf ] && echo "ok (reinicie pra ver o kiosk subir sozinho)" || echo "não configurado"
 echo -n "ffmpeg:                "; command -v ffmpeg >/dev/null 2>&1 && echo "ok" || echo "NÃO encontrado (cache de vídeos não consegue juntar vídeo+áudio)"
-echo -n "volume (Master):       "; amixer get Master 2>/dev/null | grep -o '\[[0-9]*%\]' | head -1 || echo "controle não encontrado"
+echo -n "volume (Master):       "; amixer get Master 2>/dev/null | grep -o '\[[0-9]*%\]' | sed -n 1p || echo "controle não encontrado"
 echo -n "wifi onboard (ssv6051): "
 if lsmod 2>/dev/null | grep -q '^ssv6051'; then
   echo "carregado (blacklist nao aplicada ainda? reboot pendente)"
@@ -273,8 +360,8 @@ else
 fi
 
 echo
-echo "Pronto. Lembre de manter o yt-dlp atualizado de tempos em tempos:"
-echo "  yt-dlp -U"
+echo "Pronto. O yt-dlp se atualiza sozinho toda semana (tvbox-ytdlp-update.timer)."
+echo "Pra forçar agora: sudo systemctl start tvbox-ytdlp-update.service"
 echo
 echo "WiFi onboard (SSV6051) e conhecidamente quebrado nesta placa — use"
 echo "um dongle USB WiFi (Realtek RTL8188EUS/RTL8192EU recomendado)."
@@ -290,11 +377,8 @@ echo "      wpa-psk  \"SUA_SENHA\""
 echo "  CFG"
 echo "  sudo ifup wlan1   # ou reboot"
 echo
-echo "Pra rodar o kiosk (+ painel institucional no Chromium) direto ao"
-echo "subir o X (sem gerenciador de janelas):"
-echo "  echo 'exec /caminho/para/tvbox-esus-otimizado/exec.sh' > ~/.xinitrc"
-echo "  chmod +x ~/.xinitrc"
-echo "  startx"
+echo "O kiosk (+ painel institucional no Chromium) sobe sozinho no próximo"
+echo "boot (autologin no tty1 -> startx -> exec.sh). Pra testar agora: reboot"
 echo
-echo "Pra desligar o painel do Chromium e rodar só o vídeo:"
-echo "  PANEL_ENABLED=0 startx"
+echo "Pra desligar o painel do Chromium e rodar só o vídeo, edite"
+echo "PANEL_ENABLED em exec.sh."
