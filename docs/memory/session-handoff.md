@@ -1,5 +1,31 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-30 (parte 24) — controle remoto: VOL- somava, VOL+ não fazia nada
+
+Usuário: "o botão - está somando e o botão + está desabilitado". Antes,
+alinhei o repositório do dispositivo com o GitHub (`fd905e2`).
+1. **Keymap deslocado**: re-captura botão a botão (usuário pediu esse
+   formato — eu pedia um botão, ele apertava, eu lia o `ir-keytable -t`).
+   Reais: VOL+ `0x50511`, VOL- `0x5054c`, MUTE `0x50541`. Corrigido em
+   `install.sh` (+ `ir-keytable -c` na regra udev) e aplicado rodando o
+   `install.sh` no dispositivo. POWER não foi recapturado (desliga).
+2. **Passo de ~10% por toque**: não era repetição (1 `key_down` por
+   toque no log), era o passo relativo do `amixer` no softvol.
+   `AdjustVolume()` agora usa valor absoluto. Compilado e reiniciado no
+   dispositivo.
+**Confirmado pelo usuário com o controle físico**: +5% e -5% exatos,
+MUTE/unMUTE voltando ao valor anterior. Detalhes em [[known-issues]]
+itens -6/-8.
+
+Armadilhas desta sessão: `pkill -f "ir-keytable -t"` via SSH mata o
+próprio shell remoto (o padrão aparece na linha de comando dele) — use
+`pkill -x`. `ir-keytable -t > arquivo` fica vazio sem `stdbuf -oL`.
+
+Estado: `install.sh`, `src/remote_control.cpp` e docs alterados, **sem
+commit**; o dispositivo já roda essa versão.
+
+---
+
 ## Sessão de 2026-09-30 (parte 23) — "resolva os bugs em known-issues.md"
 
 Revisei todos os itens. Resolvidos agora, tudo testado no RK3229 via SSH:

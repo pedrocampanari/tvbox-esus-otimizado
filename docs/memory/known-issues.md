@@ -64,8 +64,19 @@ Testado no dispositivo injetando `EV_KEY` em `/dev/input/event0`
 (mesmo caminho do receptor IR): VOL- 100→90%, MUTE →0%, MUTE →90%,
 VOL+ →100%, indicador no rodapé confirmado por captura de frames.
 Em 2026-09-30, boot real: volume deixado em 70% antes de reiniciar voltou
-em 70% (`exec.sh` cria o "Master" e faz `alsactl restore`). Ainda não
-testado: o controle físico de verdade e o som audível na TV.
+em 70% (`exec.sh` cria o "Master" e faz `alsactl restore`).
+
+**Passo do volume errado (corrigido em 2026-09-30)**: com o controle
+físico, cada toque andava ~10% (100→90→80→69) e VOL+ foi de 50% a 100%
+em dois toques. O log do kernel mostrou UM `key_down` por toque — não
+era repetição. Causa: o passo relativo do `amixer` (`5%+`/`5%-`) no
+softvol (escala em dB) não anda 5% na escala que o próprio `amixer`
+exibe. `AdjustVolume()` agora calcula o alvo absoluto (atual ± 5) e faz
+`sset Master N%`, que faz ida e volta exata.
+
+**Confirmado com o controle físico (2026-09-30)**: VOL+ ×3 → 55/60/65%,
+VOL- ×3 → 60/55/50%, MUTE → "VOLUME: MUDO", MUTE → 50%. Só falta
+ouvir o som na TV (o vídeo é mudo; o som vem do painel do Chromium).
 
 ## -7. WiFi onboard (SSV6051) não funciona sob Armbian — driver `ssv6x5x` TESTADO em 2026-09-30 e DESCARTADO; caminho: dongle USB
 
@@ -178,7 +189,7 @@ nesta sessão — pedido pro usuário `git pull` + `./install.sh` de novo
 Realtek/Ralink/Atheros/MediaTek + seguir as instruções impressas no
 fim do `install.sh` pra configurar a rede.
 
-## -6. Controle remoto IR do hardware não fazia nada — RESOLVIDO em 2026-09-27 (POWER confirmado no dispositivo real; VOL+/VOL-/MUTE confirmados por injeção de evento em 2026-09-29, ver item -8 — falta só o controle físico)
+## -6. Controle remoto IR do hardware não fazia nada — RESOLVIDO (POWER em 2026-09-27; VOL+/VOL-/MUTE remapeados e confirmados com o controle físico em 2026-09-30, ver também item -8)
 Pedido do usuário: "preciso reabilitar o controle remoto que veio com o
 hardware". Não é regressão nossa — o Armbian genérico nunca tinha esse
 suporte configurado (o firmware Android original do box trazia isso
@@ -197,13 +208,21 @@ esperar um keymap chamado `rc-rk322x-tvbox` (visível em `ir-keytable`,
 campo "Default keymap"), mas esse arquivo não existe nesta imagem
 Armbian — é específico do firmware Android original.
 
-**Scancodes capturados e confirmados ao vivo** (`ir-keytable -t`,
-apertando cada botão do controle físico desta unidade, na ordem
-confirmada pelo usuário):
-- POWER → `0x50540`
-- VOL+ → `0x5054c`
-- VOL- → `0x50541`
-- MUTE → `0x50518`
+**Scancodes** (`ir-keytable -t`, controle físico desta unidade).
+⚠️ **Corrigido em 2026-09-30**: o mapeamento original (captura em
+sequência, 2026-09-27) estava deslocado — no uso real, VOL- aumentava e
+VOL+ não fazia nada. Re-capturado **um botão por vez**, com o usuário
+apertando só o botão pedido e eu lendo o log entre cada um:
+- POWER → `0x50540` (não recapturado: desliga o aparelho; já tinha sido
+  confirmado desligando)
+- VOL+ → `0x50511` (antes: não mapeado)
+- VOL- → `0x5054c` (antes: mapeado como VOL+)
+- MUTE → `0x50541` (antes: mapeado como VOL-)
+- `0x50518` (antes "MUTE") não saiu de nenhum desses botões — removido.
+A regra udev passou a usar `ir-keytable -c -w` (sem `-c`, reaplicar ao
+vivo soma os códigos novos aos antigos). Dica pra futuras capturas:
+`ir-keytable -t` gravando em arquivo precisa de `stdbuf -oL`, senão o
+arquivo fica vazio (buffer).
 
 **Decisão do usuário sobre o botão POWER** (pergunta feita
 explicitamente, não assumida): desligamento real do sistema

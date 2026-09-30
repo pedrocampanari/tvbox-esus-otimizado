@@ -158,6 +158,8 @@ done
 # nunca EV_KEY, então nenhuma tecla chega em lugar nenhum. Scancodes
 # abaixo capturados e confirmados ao vivo (`ir-keytable -t`) num
 # controle real desta unidade — ver docs/memory/known-issues.md.
+# VOL+/VOL-/MUTE re-capturados botão a botão em 2026-09-30: o mapeamento
+# de 2026-09-27 estava deslocado (VOL- somava, VOL+ não fazia nada).
 log "Gravando keymap do controle remoto IR (POWER/VOL+/VOL-/MUTE)"
 $SUDO mkdir -p /etc/rc_keymaps
 $SUDO tee /etc/rc_keymaps/rc-rk322x-tvbox.toml > /dev/null <<'TOML'
@@ -167,9 +169,9 @@ protocol = "nec"
 variant = "necx"
 [protocols.scancodes]
 0x50540 = "KEY_POWER"
-0x5054c = "KEY_VOLUMEUP"
-0x50541 = "KEY_VOLUMEDOWN"
-0x50518 = "KEY_MUTE"
+0x50511 = "KEY_VOLUMEUP"
+0x5054c = "KEY_VOLUMEDOWN"
+0x50541 = "KEY_MUTE"
 TOML
 
 # Regra própria em vez de confiar no casamento automático do
@@ -178,9 +180,12 @@ TOML
 # Dispara toda vez que a interface rc0 aparece (boot ou hot-plug) e
 # aplica o keymap acima explicitamente, sem depender do driver reportar
 # o "Default keymap" certo nem do formato do rc_maps.cfg da distro.
+# `-c` limpa o keymap atual antes do `-w`: sem ele, reaplicar com o
+# aparelho ligado SOMA os códigos novos aos antigos (um mapeamento errado
+# anterior continuaria valendo até o próximo boot).
 log "Instalando regra udev para carregar o keymap ao detectar o receptor IR"
 $SUDO tee /etc/udev/rules.d/99-tvbox-ir-remote.rules > /dev/null <<'UDEV'
-ACTION=="add", SUBSYSTEM=="rc", KERNEL=="rc[0-9]*", RUN+="/usr/bin/ir-keytable -w /etc/rc_keymaps/rc-rk322x-tvbox.toml -s $kernel"
+ACTION=="add", SUBSYSTEM=="rc", KERNEL=="rc[0-9]*", RUN+="/usr/bin/ir-keytable -c -w /etc/rc_keymaps/rc-rk322x-tvbox.toml -s $kernel"
 UDEV
 $SUDO udevadm control --reload-rules
 # --action=add é obrigatório aqui: sem essa flag o udevadm trigger manda

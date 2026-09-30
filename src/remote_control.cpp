@@ -1,5 +1,6 @@
 #include "remote_control.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fcntl.h>
 #include <fstream>
@@ -194,9 +195,14 @@ bool AdjustVolume(int deltaPercent, bool toggleMute, int &outPercent, bool &outM
                          ignored);
     } else if (deltaPercent != 0) {
         g_volumeBeforeSoftMute = -1;
-        std::string step =
-            std::to_string(std::abs(deltaPercent)) + "%" + (deltaPercent > 0 ? "+" : "-");
-        RunCaptureStdout({"amixer", "-q", "sset", control, step}, 3, ignored);
+        // Valor ABSOLUTO (atual ± delta), nunca o relativo "5%+"/"5%-" do
+        // amixer: no softvol (escala em dB) o passo relativo não anda 5%
+        // na escala que o próprio amixer exibe — medido no RK3229 em
+        // 2026-09-30, cada toque andava ~10% (100→90→80→69), e VOL+ foi
+        // de 50% a 100% em dois toques. O absoluto faz ida e volta exata.
+        int target = std::max(0, std::min(100, current + deltaPercent));
+        RunCaptureStdout({"amixer", "-q", "sset", control, std::to_string(target) + "%"}, 3,
+                         ignored);
     }
 
     if (!GetVolume(control, outPercent, outMuted, hasSwitch)) return false;
