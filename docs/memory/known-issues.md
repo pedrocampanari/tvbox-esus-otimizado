@@ -1,5 +1,48 @@
 # Problemas e decisões em aberto conhecidas
 
+## -12. Arquivos zerados depois de tirar da tomada (`commit=120` do Armbian) — PARCIALMENTE MITIGADO em 2026-09-30; decisão em aberto
+Visto no dispositivo: depois de um religamento às 10:50, arquivos
+gravados poucos minutos antes voltaram com **0 byte** — `install.sh`,
+docs, `src/remote_control.cpp` e 9 objetos do `.git` (o repositório
+ficou com `fatal: bad object HEAD`). O próximo `make` falhou no link e o
+kiosk caiu (o autologin do item -10 o trouxe de volta assim que o
+binário foi recompilado). Causa: `/` montado com `commit=120` (fstab do
+Armbian, pra poupar a eMMC) + alocação atrasada do ext4 → até ~2 min de
+gravações só existem na RAM.
+Reparo feito: objetos vazios apagados, `git fetch` + `git reset --hard
+origin/main`, `git fsck` limpo.
+Mitigação no código: o cache de vídeos faz `fsync` do arquivo baixado,
+do `manifest.tsv` (antes do `rename`) e do diretório, e ignora arquivos
+de 0 byte ao carregar.
+**Em aberto (decisão do usuário)**: reduzir o `commit` (ex.: 15-30s)
+protege também logs, `asound.state` e o perfil do Chromium (pareamento
+do painel!) ao custo de mais escrita na flash. Até lá: depois de
+atualizar o dispositivo, rodar `sync` antes de desligar da tomada.
+
+## -11. Tela preta no fim dos vídeos — RESOLVIDO em 2026-09-30 (medido no dispositivo)
+Relato do usuário: "tela preta ao final da execução". Investigação no
+RK3229 (sonda no socket IPC do mpv + captura da tela a 5 fps):
+1. **O próprio arquivo termina preto**: `blackdetect` do ffmpeg mostrou
+   8 dos 10 vídeos com 2 a 60 s de preto no final (fade-out/encerramento
+   do YouTube). O pior, `8j0AOhflraE`: conteúdo até ~184 s, preto de
+   ~186 s a 245 s (confirmado extraindo quadros). Correção: o cache mede
+   o preto final depois de baixar (só o trecho final, `nice`) e grava o
+   "fim útil" no `manifest.tsv`; o player seta a opção `end` do mpv
+   antes do `loadfile`. Sem recodificar. Arquivos já em cache são
+   analisados sem baixar de novo. Verificado: o `end-file` chega
+   exatamente no fim útil (ex.: 115,87 s de 120,70 s).
+2. **~11 s de "carregando" entre vídeos, mesmo com arquivo local**: cada
+   vídeo abria um mpv novo, e só criar o contexto EGL (Mesa/lima) leva
+   ~3 s no RK3229 (medido com `--log-file`), mais o resto com a CPU
+   disputada. Correção: UM mpv persistente (`--idle --force-window`),
+   arquivos trocados via IPC (`loadfile`). Fim do vídeo → primeiro quadro
+   do próximo: **0,6 s**.
+3. **Janela preta entre o fim do arquivo e a troca de slide**: a janela
+   de vídeo (fundo preto) ficava mapeada até o app perceber a saída do
+   processo. Agora é escondida no instante do evento `end-file`.
+Resultado filmado: fade-out do vídeo (~0,4 s) → título da próxima
+campanha com spinner (~0,4 s) → próximo vídeo.
+
 ## -10. Kiosk não subia sozinho ao ligar (exigia `startx` manual) — RESOLVIDO em 2026-09-30 (boot real testado no dispositivo)
 Requisito do projeto: "ao ligar na tomada, aparece o binário". Visto no
 dispositivo depois de um reboot: nenhum autologin, nenhum `startx`

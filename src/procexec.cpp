@@ -12,7 +12,8 @@
 namespace kiosk {
 
 bool RunCaptureStdout(const std::vector<std::string> &argv, int timeoutSeconds,
-                      std::string &outStdout, const std::atomic<bool> *cancel) {
+                      std::string &outStdout, const std::atomic<bool> *cancel,
+                      bool mergeStderr) {
     outStdout.clear();
     if (argv.empty()) return false;
 
@@ -41,9 +42,10 @@ bool RunCaptureStdout(const std::vector<std::string> &argv, int timeoutSeconds,
         int devNull = open("/dev/null", O_RDWR);
         if (devNull >= 0) {
             dup2(devNull, STDIN_FILENO);
-            dup2(devNull, STDERR_FILENO);
+            if (!mergeStderr) dup2(devNull, STDERR_FILENO);
             close(devNull);
         }
+        if (mergeStderr) dup2(STDOUT_FILENO, STDERR_FILENO);
 
         std::vector<char *> cargv;
         cargv.reserve(argv.size() + 1);

@@ -27,8 +27,12 @@
 //   - Vídeo sem nenhum arquivo local ainda cai no streaming direto do
 //     mpv (comportamento antigo) — só na primeira volta após instalar.
 //   - "Registro": manifest.tsv no diretório do cache (chave, arquivo,
-//     boot_id, tamanho, data, url), reescrito atomicamente a cada
-//     download concluído.
+//     boot_id, tamanho, data, url, analisado, fim_util), reescrito
+//     atomicamente (fsync + rename) a cada download/análise concluído.
+//   - Preto no final: vários vídeos do YouTube terminam com 2-8s+ de
+//     tela preta no próprio arquivo. Depois de baixar, a thread mede isso
+//     (`blackdetect` do ffmpeg, só no trecho final) e grava o "fim útil";
+//     o player para ali (opção `end` do mpv) — sem recodificar nada.
 //
 // Não inclui raylib.h nem Xlib.h (mesma regra de isolamento de headers
 // do player — ver docs/memory/architecture.md).
@@ -56,6 +60,12 @@ public:
     // anterior), ou string vazia se ainda não houver nenhum.
     std::string LocalPathFor(const std::string &videoUrl) const;
 
+    // Igual a LocalPathFor, e também o "fim útil" em segundos (onde começa
+    // o preto final do arquivo), ou 0 = tocar até o fim / ainda não
+    // analisado.
+    bool LocalFileFor(const std::string &videoUrl, std::string &outPath,
+                      double &outPlayEndSeconds) const;
+
     // Loga que o vídeo foi exibido até o fim (kiosk.log).
     void RecordShown(const Campaign &campaign) const;
 
@@ -66,6 +76,8 @@ private:
         std::string bootId;   // boot em que o arquivo foi baixado
         long long bytes = 0;
         long long downloadedAt = 0;
+        bool analyzed = false;    // preto final já medido
+        double playEnd = 0;       // segundos; 0 = até o fim do arquivo
         int failures = 0;         // neste boot
         double nextAttemptAt = 0; // relógio monotônico, em segundos
     };
@@ -73,9 +85,13 @@ private:
     void WorkerLoop();
     bool DownloadOne(const std::string &key, const std::string &url, std::string &outFileName,
                      long long &outBytes);
-    // Próxima chave a baixar (ou vazia), em ordem de rotação a partir do
-    // slide atual. Chamar com mutex_ travado.
-    std::string PickNextLocked(double now, double &outWaitSeconds) const;
+    // Próxima chave a processar (ou vazia), em ordem de rotação a partir
+    // do slide atual: baixar (não fresca neste boot) ou só analisar o
+    // preto final (`outAnalyzeOnly`, arquivo já em disco). Chamar com
+    // mutex_ travado.
+    std::string PickNextLocked(double now, double &outWaitSeconds, bool &outAnalyzeOnly) const;
+    // Fim útil (segundos) do arquivo: onde começa o preto final, ou 0.
+    double MeasurePlayEnd(const std::string &path);
     void LoadManifestLocked();
     void SaveManifestLocked() const;
     // Apaga do diretório tudo que não é manifest nem arquivo de uma

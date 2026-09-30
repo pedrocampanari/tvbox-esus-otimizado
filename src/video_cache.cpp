@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <dirent.h>
+#include <fcntl.h>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -48,9 +49,20 @@ std::string ReadBootId() {
     return id.empty() ? "unknown-boot" : id;
 }
 
+// Arquivo regular e NÃO vazio: depois de um corte de energia, arquivos
+// gravados pouco antes podem voltar com 0 byte (visto no RK3229 em
+// 2026-09-30 — a eMMC ainda não tinha recebido os dados).
 bool FileExists(const std::string &path) {
     struct stat st{};
-    return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+    return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
+}
+
+// Força os dados de `path` (arquivo ou diretório) até a flash.
+void SyncPath(const std::string &path) {
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0) return;
+    fsync(fd);
+    close(fd);
 }
 
 long long FileSize(const std::string &path) {
@@ -170,11 +182,21 @@ void VideoCache::SetCurrentIndex(size_t index) {
 }
 
 std::string VideoCache::LocalPathFor(const std::string &videoUrl) const {
+    std::string path;
+    double playEnd = 0;
+    return LocalFileFor(videoUrl, path, playEnd) ? path : "";
+}
+
+bool VideoCache::LocalFileFor(const std::string &videoUrl, std::string &outPath,
+                              double &outPlayEndSeconds) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = entries_.find(KeyForUrl(videoUrl));
-    if (it == entries_.end() || it->second.fileName.empty()) return "";
+    if (it == entries_.end() || it->second.fileName.empty()) return false;
     std::string path = cacheDir_ + "/" + it->second.fileName;
-    return FileExists(path) ? path : "";
+    if (!FileExists(path)) return false;
+    outPath = path;
+    outPlayEndSeconds = it->second.analyzed ? it->second.playEnd : 0.0;
+    return true;
 }
 
 void VideoCache::RecordShown(const Campaign &campaign) const {
@@ -182,8 +204,10 @@ void VideoCache::RecordShown(const Campaign &campaign) const {
     Log("exibido ate o fim: \"%s\" (%s)", campaign.titulo, local ? "cache local" : "streaming");
 }
 
-std::string VideoCache::PickNextLocked(double now, double &outWaitSeconds) const {
+std::string VideoCache::PickNextLocked(double now, double &outWaitSeconds,
+                                       bool &outAnalyzeOnly) const {
     outWaitSeconds = 60.0; // nada pendente: só acorda por SetCampaigns/SetCurrentIndex
+    outAnalyzeOnly = false;
     size_t n = order_.size();
     for (size_t step = 1; step <= n; ++step) {
         const std::string &key = order_[(currentIndex_ + step) % n];
@@ -191,7 +215,14 @@ std::string VideoCache::PickNextLocked(double now, double &outWaitSeconds) const
         auto it = entries_.find(key);
         if (it == entries_.end()) continue;
         const Entry &e = it->second;
-        if (!e.fileName.empty() && e.bootId == bootId_) continue; // já fresco neste boot
+        if (!e.fileName.empty() && e.bootId == bootId_) {
+            // Já fresco neste boot; falta só medir o preto final?
+            if (!e.analyzed && e.nextAttemptAt <= now) {
+                outAnalyzeOnly = true;
+                return key;
+            }
+            continue;
+        }
         if (e.nextAttemptAt > now) {
             outWaitSeconds = std::min(outWaitSeconds, e.nextAttemptAt - now);
             continue;
@@ -206,16 +237,37 @@ void VideoCache::WorkerLoop() {
     while (!stop_.load()) {
         std::string key;
         std::string url;
+        std::string existingFile;
+        bool analyzeOnly = false;
         {
             std::unique_lock<std::mutex> lock(mutex_);
             double wait = 0;
-            key = PickNextLocked(MonotonicSeconds(), wait);
+            key = PickNextLocked(MonotonicSeconds(), wait, analyzeOnly);
             if (key.empty()) {
                 wake_.wait_for(lock, std::chrono::duration<double>(wait),
                                [this] { return stop_.load(); });
                 continue;
             }
             url = entries_[key].url;
+            existingFile = entries_[key].fileName;
+        }
+
+        if (analyzeOnly) {
+            // Arquivo já em disco (ex.: baixado antes desta versão): só
+            // mede o preto final, sem baixar de novo.
+            double playEnd = MeasurePlayEnd(cacheDir_ + "/" + existingFile);
+            if (stop_.load()) break;
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = entries_.find(key);
+            if (it != entries_.end() && it->second.fileName == existingFile) {
+                it->second.analyzed = true;
+                it->second.playEnd = playEnd;
+                SaveManifestLocked();
+                Log("analisado: %s (%s)", url,
+                    playEnd > 0 ? "preto final cortado em " + std::to_string(playEnd) + "s"
+                                : std::string("sem preto final"));
+            }
+            continue;
         }
 
         long long freeBytes = FreeBytes(cacheDir_);
@@ -237,6 +289,8 @@ void VideoCache::WorkerLoop() {
         long long bytes = 0;
         bool ok = DownloadOne(key, url, fileName, bytes);
         if (stop_.load()) break;
+        double playEnd = ok ? MeasurePlayEnd(cacheDir_ + "/" + fileName) : 0.0;
+        if (stop_.load()) break;
 
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
@@ -256,10 +310,15 @@ void VideoCache::WorkerLoop() {
             e.bootId = bootId_;
             e.bytes = bytes;
             e.downloadedAt = static_cast<long long>(std::time(nullptr));
+            e.analyzed = true;
+            e.playEnd = playEnd;
             e.failures = 0;
             e.nextAttemptAt = 0;
             SaveManifestLocked();
-            Log("pronto: %s (%s bytes)", url, std::to_string(bytes));
+            Log("pronto: %s (%s)", url,
+                std::to_string(bytes) + " bytes" +
+                    (playEnd > 0 ? ", preto final cortado em " + std::to_string(playEnd) + "s"
+                                 : ""));
         } else {
             e.failures++;
             // 30s, 60s, 120s... até 10min: rede fora no boot não pode
@@ -324,8 +383,56 @@ bool VideoCache::DownloadOne(const std::string &key, const std::string &url,
         unlink(downloadedPath.c_str());
         return false;
     }
+    // Dados + entrada de diretório na flash ANTES de o manifest apontar
+    // pra este arquivo (ver FileExists: corte de energia).
+    SyncPath(cacheDir_ + "/" + outFileName);
+    SyncPath(cacheDir_);
     outBytes = FileSize(cacheDir_ + "/" + outFileName);
     return outBytes > 0;
+}
+
+double VideoCache::MeasurePlayEnd(const std::string &path) {
+    std::string out;
+    if (!RunCaptureStdout({"ffprobe", "-v", "error", "-show_entries", "format=duration", "-of",
+                           "csv=p=0", path},
+                          60, out, &stop_)) {
+        return 0.0;
+    }
+    double duration = std::atof(out.c_str());
+    if (duration <= 0) return 0.0;
+
+    // Só o trecho final é decodificado (~30s; alguns vídeos têm preto
+    // mais longo — aí amplia a janela e mede de novo). Prioridade mínima
+    // de CPU, igual ao download.
+    for (double window = 30.0;; window *= 4) {
+        window = std::min(window, duration);
+        double windowStart = duration - window;
+        std::vector<std::string> argv;
+        if (access("/usr/bin/nice", X_OK) == 0) argv.insert(argv.end(), {"nice", "-n", "19"});
+        argv.insert(argv.end(), {"ffmpeg", "-hide_banner", "-nostats", "-ss",
+                                 std::to_string(windowStart), "-i", path, "-an", "-sn", "-vf",
+                                 "blackdetect=d=0.5:pix_th=0.10", "-f", "null", "-"});
+        if (!RunCaptureStdout(argv, 300, out, &stop_, /*mergeStderr=*/true)) return 0.0;
+
+        // Último intervalo preto informado (tempos relativos ao -ss).
+        double blackStart = -1;
+        double blackEnd = -1;
+        size_t pos = 0;
+        while ((pos = out.find("black_start:", pos)) != std::string::npos) {
+            blackStart = std::atof(out.c_str() + pos + 12);
+            auto endPos = out.find("black_end:", pos);
+            blackEnd = endPos == std::string::npos ? -1 : std::atof(out.c_str() + endPos + 10);
+            pos += 12;
+        }
+        if (blackStart < 0 || blackEnd < 0) return 0.0;
+        // Preto que não vai até o fim do arquivo não é "preto final".
+        if (windowStart + blackEnd < duration - 0.5) return 0.0;
+        // Preto cobrindo a janela inteira: começa antes dela — amplia.
+        if (blackStart < 0.5 && window < duration) continue;
+        // +0,2s: deixa o finalzinho do fade-out, sem cortar seco.
+        double playEnd = windowStart + blackStart + 0.2;
+        return playEnd >= 3.0 ? playEnd : 0.0; // vídeo "todo preto": não mexe
+    }
 }
 
 void VideoCache::LoadManifestLocked() {
@@ -336,6 +443,7 @@ void VideoCache::LoadManifestLocked() {
         std::istringstream fields(line);
         for (std::string col; std::getline(fields, col, '\t');) cols.push_back(col);
         if (cols.size() < 6) continue;
+        // FileExists também descarta arquivo de 0 byte (corte de energia).
         if (!FileExists(cacheDir_ + "/" + cols[1])) continue;
         Entry e;
         e.fileName = cols[1];
@@ -343,6 +451,10 @@ void VideoCache::LoadManifestLocked() {
         e.bytes = std::atoll(cols[3].c_str());
         e.downloadedAt = std::atoll(cols[4].c_str());
         e.url = cols[5];
+        if (cols.size() >= 8) { // colunas novas (2026-09-30); antigas: analisa depois
+            e.analyzed = cols[6] == "1";
+            e.playEnd = std::atof(cols[7].c_str());
+        }
         entries_[cols[0]] = e;
     }
 }
@@ -353,15 +465,20 @@ void VideoCache::SaveManifestLocked() const {
     {
         std::ofstream out(tmp, std::ios::trunc);
         if (!out.is_open()) return;
-        out << "# chave\tarquivo\tboot_id\tbytes\tbaixado_em_unix\turl\n";
+        out << "# chave\tarquivo\tboot_id\tbytes\tbaixado_em_unix\turl\tanalisado\tfim_util_s\n";
         for (const auto &kv : entries_) {
             const Entry &e = kv.second;
             if (e.fileName.empty()) continue;
             out << kv.first << '\t' << e.fileName << '\t' << e.bootId << '\t' << e.bytes << '\t'
-                << e.downloadedAt << '\t' << e.url << '\n';
+                << e.downloadedAt << '\t' << e.url << '\t' << (e.analyzed ? 1 : 0) << '\t'
+                << e.playEnd << '\n';
         }
     }
+    // fsync antes do rename: sem isso um corte de energia pode deixar o
+    // manifest novo com 0 byte (a flash não recebeu os dados ainda).
+    SyncPath(tmp);
     rename(tmp.c_str(), path.c_str());
+    SyncPath(cacheDir_);
 }
 
 void VideoCache::RemoveOrphanFilesLocked(bool includePartials) const {

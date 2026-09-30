@@ -66,52 +66,73 @@ public:
     // include/ui.h::DrawLoadingSlide).
     // `localFile`: caminho do cache local (include/video_cache.h); se
     // vazio, faz streaming da URL da campanha via ytdl_hook do mpv.
-    // Toca UMA vez (sem loop) — ver HasExited().
-    bool Play(const Campaign &campaign, const std::string &localFile);
+    // Toca UMA vez (sem loop) — ver HasEnded(). Usa sempre o MESMO
+    // processo mpv (lançado no primeiro Play(), relançado se morrer) e
+    // troca de arquivo via IPC (`loadfile`): o contexto EGL do RK3229
+    // (~3s pra criar) é pago uma única vez. A janela de vídeo fica
+    // ESCONDIDA até a confirmação de playback (IsVideoActuallyPlaying) —
+    // enquanto isso, quem chamou desenha a animação de carregamento.
+    // `playEndSeconds` > 0: para nesse ponto (fim útil medido pelo cache
+    // — corta o preto final do arquivo); 0 = até o fim.
+    bool Play(const Campaign &campaign, const std::string &localFile, double playEndSeconds = 0);
 
-    // Esconde a janela de vídeo e mata o processo mpv, se houver.
+    // Esconde a janela de vídeo e para o arquivo atual (o processo mpv
+    // continua vivo, ocioso, pro próximo Play()).
     void Stop();
 
-    // Stop() + destrói a janela de vídeo e fecha a conexão X11. Chamar
-    // ANTES do CloseWindow() do Raylib: a janela de vídeo é filha da
-    // dele e morre junto; mexer nela depois gera BadWindow, que o Xlib
-    // trata abortando o processo (exit 1). Idempotente; o destrutor
-    // também chama.
+    // Stop() + mata o mpv, destrói a janela de vídeo e fecha a conexão
+    // X11. Chamar ANTES do CloseWindow() do Raylib: a janela de vídeo é
+    // filha da dele e morre junto; mexer nela depois gera BadWindow, que
+    // o Xlib trata abortando o processo (exit 1). Idempotente; o
+    // destrutor também chama.
     void Shutdown();
 
-    // true uma única vez, quando o mpv iniciado pelo último Play() saiu
-    // sozinho — fim do vídeo (sucesso) ou erro ao abrir/resolver. Chamar
-    // todo frame enquanto o slide de vídeo estiver ativo.
-    bool HasExited();
+    // true uma única vez quando o vídeo do último Play() acabou: fim do
+    // arquivo (sucesso), erro ao abrir/resolver, ou o mpv morreu. A
+    // janela já é escondida no mesmo instante. Chamar todo frame
+    // enquanto o slide de vídeo estiver ativo.
+    bool HasEnded();
 
-    // Detecta playback real via o evento "playback-restart" que o mpv
-    // manda sozinho (sem precisar perguntar nada) pelo seu socket IPC
-    // JSON assim que o primeiro frame de verdade foi (re)configurado e
-    // está saindo — não é mais baseado em polling de propriedade (ver
-    // src/player.cpp pro histórico do porquê). Retorna `false` até a
-    // primeira confirmação; a partir daí sempre `true` (até o próximo
-    // `Play()`/`Stop()`), e nesse instante exato a janela de vídeo é
-    // mapeada/exibida pela primeira vez — antes disso ela fica
-    // escondida, pra dar tempo da animação de carregamento (desenhada
-    // por fora, no Raylib) aparecer sem um quadro preto do mpv por
-    // cima. Chamar isso todo frame enquanto o slide de vídeo estiver
-    // ativo e ainda não confirmado.
+    // Detecta playback real pelo evento "playback-restart" que o mpv
+    // manda pelo socket IPC assim que o primeiro quadro de verdade do
+    // arquivo atual está saindo — e mapeia a janela de vídeo nesse
+    // instante. `false` até lá. Chamar todo frame enquanto o slide de
+    // vídeo estiver ativo e ainda não confirmado.
     bool IsVideoActuallyPlaying();
 
 private:
     Display *display_ = nullptr;
     Window videoWindow_ = 0;
+    bool windowMapped_ = false;
     pid_t mpvPid_ = -1;
 
     int ipcSocketFd_ = -1;
     std::string ipcSocketPath_;
     std::string ipcReadBuffer_;
+    std::string pendingCommand_; // enviado assim que o socket conectar
+
+    // Estado do arquivo pedido pelo último Play().
+    bool active_ = false;
     bool videoConfirmedPlaying_ = false;
+    bool ended_ = false;
+    bool endReported_ = false;
+    long requestCounter_ = 0;
+    long loadRequestId_ = -1;
+    long currentEntryId_ = -1;
+    long lastStartedEntryId_ = -1;
+    bool currentStarted_ = false;
 
     // Valida a URL da campanha (trata "TODO"/vazio) e a repassa como
     // está — o mpv que resolve internamente se não for um arquivo direto.
     std::string ResolveStreamUrl(const Campaign &campaign) const;
 
+    bool EnsureProcess();
+    void KillProcess();
+    void HideWindow();
+    // Conecta no socket (se preciso), envia o comando pendente e trata
+    // as linhas JSON recebidas. Também detecta o mpv morrendo.
+    void Pump();
+    void HandleIpcLine(const std::string &line);
     void CloseIpcSocket();
 };
 

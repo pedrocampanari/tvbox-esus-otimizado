@@ -114,11 +114,17 @@ problema real no hardware (ver [[known-issues]]).
      sem stream progressiva disponível (comum hoje no YouTube), imprime
      vídeo e áudio em URLs separadas; só o `mpv` sabe tocar isso sem
      mux/ffmpeg. Ver [[known-issues]] item 5.
-  4. Ao trocar de slide, desmapeia (hide) a janela do mpv e mata o
-     processo (SIGTERM, 1s, SIGKILL — nunca espera sem limite); ao
-     voltar pra um slide de vídeo, recria. O slide de vídeo termina
-     quando o mpv sai sozinho no fim do arquivo (`HasExited()`), não por
-     `duracao_segundos`. O mpv nasce com `PR_SET_PDEATHSIG=SIGKILL`: se o
+  4. **Um único mpv persistente** (`--idle=yes --force-window=yes`,
+     desde 2026-09-30): lançado no primeiro `Play()`, relançado se
+     morrer; cada vídeo é trocado via IPC (`set_property end` +
+     `loadfile ... replace`), e slides que não são vídeo mandam `stop`.
+     Motivo: criar o contexto EGL no RK3229 leva ~3 s; um mpv por vídeo
+     deixava ~11 s de carregamento entre vídeos. Eventos são filtrados
+     pelo `playlist_entry_id` devolvido pelo `loadfile`. O slide de
+     vídeo termina no evento `end-file` (reason `eof`/`error`) —
+     `HasEnded()` —, e a janela é escondida nesse mesmo instante (antes
+     ficava preta na tela). `duracao_segundos` não vale pra vídeo.
+     Encerramento do processo: SIGTERM, 1s, SIGKILL. O mpv nasce com `PR_SET_PDEATHSIG=SIGKILL`: se o
      app cair, o kernel mata o mpv junto (antes ele ficava órfão
      decodificando). `Shutdown()` tem que rodar ANTES do `CloseWindow()`
      do Raylib (a janela de vídeo é filha e morre junto; mexer nela
@@ -162,6 +168,13 @@ completo → registro → próximo), sem perder as animações.
   sendo tocado até o novo terminar — sem rede no boot, o kiosk segue
   com o conteúdo que já tinha. Vídeo sem nenhum arquivo local cai no
   streaming antigo (só a primeira volta depois de instalar).
+- **Preto final**: depois de baixar, `blackdetect` (ffmpeg, só no trecho
+  final, `nice`) mede onde começa o preto do encerramento do vídeo e
+  grava o "fim útil" (`fim_util_s` no manifest); o player usa isso na
+  opção `end` do mpv. Arquivos antigos são analisados sem rebaixar.
+- **Durabilidade**: `fsync` do arquivo baixado, do manifest (antes do
+  `rename`) e do diretório — `/` usa `commit=120` (ver [[known-issues]]
+  item -12); arquivos de 0 byte são ignorados ao carregar.
 - **Ordem**: uma única thread, um download por vez, sempre o próximo
   vídeo da rotação a partir do slide atual (`SetCurrentIndex`) que
   ainda não está fresco neste boot. Falha → retry com backoff

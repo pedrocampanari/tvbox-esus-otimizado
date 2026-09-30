@@ -207,15 +207,22 @@ int main() {
             videoCache.SetCurrentIndex(currentIndex);
 
             if (activeType == CampaignType::Video) {
-                // Vídeo: o slide dura o vídeo inteiro (ver HasExited
+                // Vídeo: o slide dura o vídeo inteiro (ver HasEnded
                 // abaixo); o deadline aqui é só o teto de segurança.
                 slideDeadline = slideStartTime + kVideoMaxSlideSeconds;
                 if (!playerReady) {
                     slideDeadline = slideStartTime + durationSeconds;
-                } else if (!player.Play(active, videoCache.LocalPathFor(active.video_url))) {
-                    // Falha ao iniciar: comporta-se como o onFalha do app
-                    // original e avança (depois de um respiro mínimo).
-                    slideDeadline = slideStartTime + kVideoFailureHoldSeconds;
+                } else {
+                    // Arquivo do cache (se houver) + fim útil, que corta o
+                    // preto final que vários vídeos trazem no próprio arquivo.
+                    std::string localFile;
+                    double playEnd = 0;
+                    videoCache.LocalFileFor(active.video_url, localFile, playEnd);
+                    if (!player.Play(active, localFile, playEnd)) {
+                        // Falha ao iniciar: comporta-se como o onFalha do
+                        // app original e avança (depois de um respiro mínimo).
+                        slideDeadline = slideStartTime + kVideoFailureHoldSeconds;
+                    }
                 }
             } else {
                 slideDeadline = slideStartTime + durationSeconds;
@@ -242,7 +249,7 @@ int main() {
                 videoConfirmedStarted = true;
             }
             videoReady = videoConfirmedStarted;
-            if (player.HasExited()) {
+            if (player.HasEnded()) {
                 if (videoConfirmedStarted) {
                     videoCache.RecordShown(active);
                     slideDeadline = now;

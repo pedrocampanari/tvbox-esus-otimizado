@@ -21,8 +21,12 @@ namespace kiosk {
 // `cancel` (opcional): se virar true enquanto o processo roda, ele é
 // morto e a função retorna false em até ~100ms — usado pela thread de
 // download do cache pra não segurar o encerramento do app.
+//
+// `mergeStderr`: captura o stderr junto com o stdout (ex.: filtros do
+// ffmpeg como `blackdetect`, que só escrevem no log).
 bool RunCaptureStdout(const std::vector<std::string> &argv, int timeoutSeconds,
-                      std::string &outStdout, const std::atomic<bool> *cancel = nullptr);
+                      std::string &outStdout, const std::atomic<bool> *cancel = nullptr,
+                      bool mergeStderr = false);
 
 } // namespace kiosk
 

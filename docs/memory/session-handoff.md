@@ -1,5 +1,34 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-30 (parte 25) — "tela preta ao final da execução"
+
+Investigado no dispositivo com uma sonda Python no socket IPC do mpv
+(eventos + `time-remaining`) e captura da tela a 5 fps (`ffmpeg -f
+x11grab`), montada em grade pra ver a transição quadro a quadro. Três
+causas, todas corrigidas ([[known-issues]] item -11):
+- preto no PRÓPRIO arquivo (2-60 s em 8 de 10 vídeos) → fim útil medido
+  com `blackdetect` no cache + opção `end` no mpv;
+- mpv novo por vídeo (EGL ~3 s) → mpv persistente via IPC `loadfile`
+  (transição 11 s → 0,6 s);
+- janela preta até o processo sair → escondida no `end-file`.
+Novo: `RunCaptureStdout(..., mergeStderr)`; `VideoCache::LocalFileFor`;
+colunas `analisado`/`fim_util_s` no `manifest.tsv`; `VideoPlayer`
+reescrito (`Pump`/`HandleIpcLine`, `HasEnded` no lugar de `HasExited`).
+
+**Incidente no caminho** ([[known-issues]] item -12): o dispositivo tinha
+sido religado às 10:50 e vários arquivos gravados pouco antes voltaram
+com 0 byte (incluindo objetos do git e `src/remote_control.cpp`). O
+`make` falhou, eu tinha acabado de matar o app → kiosk fora por ~2 min
+até eu reparar o repo e recompilar (o autologin trouxe tudo de volta
+sozinho). Lição: **checar `find -size 0` e `git fsck` antes de compilar
+no dispositivo**, e só matar o app depois de o `make` dar certo. Cache
+agora faz `fsync`. `commit=120` no fstab fica como decisão do usuário.
+
+Estado: código e docs alterados **sem commit**; o dispositivo já roda
+esta versão (arquivos copiados via tar + `sync`).
+
+---
+
 ## Sessão de 2026-09-30 (parte 24) — controle remoto: VOL- somava, VOL+ não fazia nada
 
 Usuário: "o botão - está somando e o botão + está desabilitado". Antes,

@@ -1,6 +1,7 @@
 #include "player.h"
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <signal.h>
@@ -18,14 +19,43 @@ namespace kiosk {
 
 namespace {
 
-// Caminho único por chamada de Play() (mesmo dentro do mesmo processo,
-// pra não colidir com o socket de uma reprodução anterior que ainda
-// esteja sendo limpa). O mpv cria esse arquivo sozinho ao subir; nós só
-// escolhemos o nome.
+// Caminho único por processo mpv lançado (se o mpv cair e for relançado,
+// não colide com o socket do anterior). O mpv cria esse arquivo sozinho
+// ao subir; nós só escolhemos o nome.
 std::string MakeIpcSocketPath() {
     static int counter = 0;
     return "/tmp/tvbox_mpv_" + std::to_string(static_cast<long>(getpid())) + "_" +
            std::to_string(counter++) + ".sock";
+}
+
+// Escapa uma string pra dentro de um literal JSON (caminho/URL do
+// comando `loadfile`).
+std::string JsonEscape(const std::string &in) {
+    std::string out;
+    out.reserve(in.size() + 8);
+    for (char c : in) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    return out;
+}
+
+// Valor inteiro depois de `"chave":` numa linha JSON do mpv, ou -1.
+long JsonIntField(const std::string &line, const char *key) {
+    std::string needle = std::string("\"") + key + "\":";
+    auto pos = line.find(needle);
+    if (pos == std::string::npos) return -1;
+    return std::strtol(line.c_str() + pos + needle.size(), nullptr, 10);
+}
+
+// Valor string depois de `"chave":"`, ou vazio.
+std::string JsonStringField(const std::string &line, const char *key) {
+    std::string needle = std::string("\"") + key + "\":\"";
+    auto pos = line.find(needle);
+    if (pos == std::string::npos) return "";
+    pos += needle.size();
+    auto end = line.find('"', pos);
+    return end == std::string::npos ? "" : line.substr(pos, end - pos);
 }
 
 } // namespace
@@ -36,6 +66,7 @@ VideoPlayer::~VideoPlayer() { Shutdown(); }
 
 void VideoPlayer::Shutdown() {
     Stop();
+    KillProcess();
     if (videoWindow_ && display_) {
         XDestroyWindow(display_, videoWindow_);
         videoWindow_ = 0;
@@ -104,22 +135,14 @@ std::string VideoPlayer::ResolveStreamUrl(const Campaign &campaign) const {
     return campaign.video_url;
 }
 
-bool VideoPlayer::Play(const Campaign &campaign, const std::string &localFile) {
-    Stop();
-    if (!display_ || !videoWindow_) return false;
+bool VideoPlayer::EnsureProcess() {
+    if (mpvPid_ > 0) {
+        if (waitpid(mpvPid_, nullptr, WNOHANG) == 0) return true; // vivo
+        mpvPid_ = -1; // morreu (crash): relança abaixo
+        CloseIpcSocket();
+    }
 
-    // Arquivo do cache local (include/video_cache.h) tem prioridade:
-    // sem rede, sem yt-dlp, sem buffering. Sem ele, streaming direto.
-    std::string streamUrl = localFile.empty() ? ResolveStreamUrl(campaign) : localFile;
-    if (streamUrl.empty()) return false;
-
-    videoConfirmedPlaying_ = false;
     ipcSocketPath_ = MakeIpcSocketPath();
-    // A janela FICA ESCONDIDA aqui — só é mapeada quando
-    // IsVideoActuallyPlaying() confirmar que o mpv já está decodificando
-    // de verdade (evita um quadro preto do mpv aparecer por cima da
-    // animação de carregamento enquanto ele resolve/bufferiza).
-
     pid_t pid = fork();
     if (pid < 0) return false;
 
@@ -144,32 +167,24 @@ bool VideoPlayer::Play(const Campaign &campaign, const std::string &localFile) {
         // explicitamente (opção documentada do próprio ytdl_hook.lua).
         const char *ytdlPathOpt = "--script-opts=ytdl_hook-ytdl_path=yt-dlp";
         // --gpu-context=x11egl: sem isso, o mpv sempre que encontra um
-        // compositor Wayland alcançável (ex.: XWayland) cria sua PRÓPRIA
-        // superfície Wayland nativa, ignorando --wid por completo —
-        // mesmo com --wid apontando pra uma janela X11 válida e mesmo
-        // sendo uma janela filha de verdade da nossa (testado e
-        // confirmado ao vivo em 2026-09-27: sem isso o vídeo aparecia
-        // numa janela/aba própria, flutuando, em vez de dentro da área
-        // reservada — ver docs/memory/known-issues.md item 5). Forçar o
-        // contexto X11/EGL garante que o mpv sempre respeite --wid,
-        // independente de haver ou não um compositor Wayland por perto
-        // (no dispositivo alvo, Xorg puro sem Wayland, isso nem seria um
-        // problema — mas forçar explicitamente é mais robusto do que
-        // depender de auto-detecção). Bônus: decode por hardware sem
-        // cópia extra (`vaapi` em vez de `vaapi-copy`) nesta sandbox.
+        // compositor Wayland alcançável cria sua PRÓPRIA superfície
+        // Wayland, ignorando --wid por completo (ver
+        // docs/memory/known-issues.md item 5).
         const char *gpuContextOpt = "--gpu-context=x11egl";
-        // --loop-file=no: o slide de vídeo termina quando o vídeo termina
-        // (mpv sai sozinho no fim do arquivo, ver HasExited()) — pedido
-        // do usuário em 2026-09-29, em vez de repetir até estourar um
-        // duracao_segundos estimado.
-        // --no-audio: o vídeo sempre foi mudo (igual ao site original,
-        // `mute=1`); sem trilha de áudio o mpv nem decodifica/abre o
-        // ALSA — menos CPU e RAM no RK3229, e o HDMI fica livre pro
-        // Chromium (painel de chamadas).
-        execlp("mpv", "mpv", wid.c_str(), gpuContextOpt, ipcOpt.c_str(), "--loop-file=no",
-               "--no-audio", "--no-osc", "--no-input-default-bindings", "--really-quiet",
-               "--hwdec=auto", "--ytdl=yes", ytdlPathOpt, ytdlFormat.c_str(), streamUrl.c_str(),
-               static_cast<char *>(nullptr));
+        // UM mpv persistente pra todos os vídeos (--idle + --force-window):
+        // no RK3229 só criar o contexto EGL (Mesa/lima) leva ~3s, e um mpv
+        // novo por vídeo deixava ~11s de "carregando" entre vídeos mesmo
+        // com arquivo local (medido em 2026-09-30). --force-window mantém
+        // o VO/contexto vivo enquanto o mpv está ocioso entre vídeos.
+        // --keep-open=no + --loop-file=no: no fim do arquivo o mpv volta
+        // a ficar ocioso e avisa com `end-file` (reason "eof") — o slide
+        // de vídeo dura o vídeo inteiro (ver HasEnded()).
+        // --no-audio: o vídeo sempre foi mudo (igual ao `mute=1` do site);
+        // sem trilha de áudio o mpv nem decodifica/abre o ALSA.
+        execlp("mpv", "mpv", wid.c_str(), gpuContextOpt, ipcOpt.c_str(), "--idle=yes",
+               "--force-window=yes", "--keep-open=no", "--loop-file=no", "--no-audio",
+               "--no-osc", "--no-input-default-bindings", "--really-quiet", "--hwdec=auto",
+               "--ytdl=yes", ytdlPathOpt, ytdlFormat.c_str(), static_cast<char *>(nullptr));
         _exit(127);
     }
 
@@ -177,92 +192,7 @@ bool VideoPlayer::Play(const Campaign &campaign, const std::string &localFile) {
     return true;
 }
 
-void VideoPlayer::CloseIpcSocket() {
-    if (ipcSocketFd_ >= 0) {
-        close(ipcSocketFd_);
-        ipcSocketFd_ = -1;
-    }
-    if (!ipcSocketPath_.empty()) {
-        unlink(ipcSocketPath_.c_str());
-    }
-    ipcReadBuffer_.clear();
-}
-
-bool VideoPlayer::IsVideoActuallyPlaying() {
-    if (videoConfirmedPlaying_) return true;
-    if (mpvPid_ <= 0) return false;
-
-    if (ipcSocketFd_ < 0) {
-        ipcSocketFd_ = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (ipcSocketFd_ < 0) return false;
-        int flags = fcntl(ipcSocketFd_, F_GETFL, 0);
-        fcntl(ipcSocketFd_, F_SETFL, flags | O_NONBLOCK);
-
-        sockaddr_un addr{};
-        addr.sun_family = AF_UNIX;
-        std::strncpy(addr.sun_path, ipcSocketPath_.c_str(), sizeof(addr.sun_path) - 1);
-        if (connect(ipcSocketFd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0 &&
-            errno != EINPROGRESS) {
-            // Normal logo após o fork: o mpv ainda não criou o arquivo
-            // do socket. Tenta de novo no próximo frame.
-            close(ipcSocketFd_);
-            ipcSocketFd_ = -1;
-            return false;
-        }
-    }
-
-    // Detecta playback real esperando o evento "playback-restart" que o
-    // próprio mpv manda sozinho (sem precisarmos pedir nada) pra
-    // qualquer cliente IPC conectado, documentado como o sinal correto
-    // de "o primeiro frame de vídeo/áudio de verdade já foi
-    // (re)configurado e está saindo" — é a mesma técnica usada por
-    // bibliotecas cliente do mpv (ex.: python-mpv `wait_for_playback`).
-    //
-    // ANTES disto aqui checávamos a propriedade "time-pos" (não-nula =
-    // "tocando"). Trocado depois que o usuário relatou o vídeo ficando
-    // preto pra sempre SÓ no RK3229 real, exatamente depois desta
-    // confirmação-antes-de-mapear ter sido adicionada (antes, a janela
-    // era mapeada sem esperar nada, então sempre "funcionava" ainda que
-    // só mostrando preto por alguns segundos). Causa mais provável:
-    // "time-pos" reflete o relógio interno de playback e pode começar a
-    // avançar antes do primeiro frame decodificado ter sido de fato
-    // composto na janela X11 — folga pequena/imperceptível num decode
-    // rápido (VAAPI/x86 desta sandbox), mas potencialmente grande num
-    // decode por hardware mais lento ou com pipeline diferente
-    // (`rkmpp` no Mali-400 do RK3229) — mapeando a janela antes dela
-    // ter algo de verdade pra mostrar. "playback-restart" é o sinal que
-    // o próprio mpv considera definitivo, sem essa ambiguidade,
-    // confirmado ao vivo (`socat` bruto no socket) disparando só depois
-    // de "video-reconfig" já ter acontecido.
-    char buf[512];
-    for (;;) {
-        ssize_t n = read(ipcSocketFd_, buf, sizeof(buf));
-        if (n <= 0) break;
-        ipcReadBuffer_.append(buf, static_cast<size_t>(n));
-        if (static_cast<size_t>(n) < sizeof(buf)) break;
-    }
-
-    size_t searchFrom = 0;
-    for (;;) {
-        size_t newlinePos = ipcReadBuffer_.find('\n', searchFrom);
-        if (newlinePos == std::string::npos) break;
-        std::string line = ipcReadBuffer_.substr(searchFrom, newlinePos - searchFrom);
-        searchFrom = newlinePos + 1;
-
-        if (line.find("\"event\":\"playback-restart\"") != std::string::npos) {
-            videoConfirmedPlaying_ = true;
-        }
-    }
-    ipcReadBuffer_.erase(0, searchFrom);
-
-    if (videoConfirmedPlaying_) {
-        XMapRaised(display_, videoWindow_);
-        XFlush(display_);
-    }
-    return videoConfirmedPlaying_;
-}
-
-void VideoPlayer::Stop() {
+void VideoPlayer::KillProcess() {
     if (mpvPid_ > 0) {
         // SIGTERM e espera no máximo ~1s: um mpv travado (driver de vídeo,
         // rede) não pode congelar o loop de desenho do kiosk.
@@ -279,19 +209,179 @@ void VideoPlayer::Stop() {
         mpvPid_ = -1;
     }
     CloseIpcSocket();
+}
+
+bool VideoPlayer::Play(const Campaign &campaign, const std::string &localFile,
+                       double playEndSeconds) {
+    if (!display_ || !videoWindow_) return false;
+
+    // Arquivo do cache local (include/video_cache.h) tem prioridade:
+    // sem rede, sem yt-dlp, sem buffering. Sem ele, streaming direto.
+    std::string source = localFile.empty() ? ResolveStreamUrl(campaign) : localFile;
+    if (source.empty()) return false;
+    if (!EnsureProcess()) return false;
+
+    // A janela fica ESCONDIDA até o `playback-restart` deste arquivo:
+    // nada de quadro preto/antigo do mpv por cima da animação de
+    // carregamento (desenhada pelo Raylib).
+    HideWindow();
+    active_ = true;
     videoConfirmedPlaying_ = false;
-    if (display_ && videoWindow_) {
+    ended_ = false;
+    endReported_ = false;
+    currentEntryId_ = -1;
+    currentStarted_ = false;
+    loadRequestId_ = ++requestCounter_;
+    // `end` é lido quando o arquivo começa: setar antes do loadfile vale
+    // só pra este arquivo (e "none" desfaz o corte do anterior). Opção
+    // global em vez de opção por-arquivo do loadfile porque a sintaxe
+    // desta mudou entre versões do mpv (0.38 ganhou o argumento de índice).
+    std::string end = (localFile.empty() || playEndSeconds <= 0) ? "none"
+                                                                  : std::to_string(playEndSeconds);
+    pendingCommand_ = "{\"command\":[\"set_property\",\"end\",\"" + end + "\"]}\n";
+    pendingCommand_ += "{\"command\":[\"loadfile\",\"" + JsonEscape(source) +
+                       "\",\"replace\"],\"request_id\":" + std::to_string(loadRequestId_) +
+                       "}\n";
+    Pump();
+    return true;
+}
+
+void VideoPlayer::Stop() {
+    HideWindow();
+    if (active_) {
+        // Mantém o processo (e o contexto EGL) vivo: só para o arquivo.
+        pendingCommand_ = "{\"command\":[\"stop\"]}\n";
+        Pump();
+    }
+    active_ = false;
+    videoConfirmedPlaying_ = false;
+    ended_ = false;
+    endReported_ = false;
+    currentEntryId_ = -1;
+    currentStarted_ = false;
+}
+
+void VideoPlayer::HideWindow() {
+    if (display_ && videoWindow_ && windowMapped_) {
         XUnmapWindow(display_, videoWindow_);
         XFlush(display_);
     }
+    windowMapped_ = false;
 }
 
-bool VideoPlayer::HasExited() {
-    if (mpvPid_ <= 0) return false;
-    if (waitpid(mpvPid_, nullptr, WNOHANG) == 0) return false; // ainda rodando
-    // Já colhido aqui: zera o pid pra Stop() não mandar sinal pra um pid
-    // que o kernel pode ter reaproveitado.
-    mpvPid_ = -1;
+void VideoPlayer::CloseIpcSocket() {
+    if (ipcSocketFd_ >= 0) {
+        close(ipcSocketFd_);
+        ipcSocketFd_ = -1;
+    }
+    if (!ipcSocketPath_.empty()) {
+        unlink(ipcSocketPath_.c_str());
+    }
+    ipcReadBuffer_.clear();
+}
+
+void VideoPlayer::Pump() {
+    if (mpvPid_ > 0 && waitpid(mpvPid_, nullptr, WNOHANG) != 0) {
+        // mpv morreu (crash/sinal): o vídeo atual acabou com falha; o
+        // próximo Play() relança o processo.
+        mpvPid_ = -1;
+        CloseIpcSocket();
+        pendingCommand_.clear();
+        if (active_) ended_ = true;
+        HideWindow();
+        return;
+    }
+    if (mpvPid_ <= 0) return;
+
+    if (ipcSocketFd_ < 0) {
+        ipcSocketFd_ = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (ipcSocketFd_ < 0) return;
+        int flags = fcntl(ipcSocketFd_, F_GETFL, 0);
+        fcntl(ipcSocketFd_, F_SETFL, flags | O_NONBLOCK);
+
+        sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        std::strncpy(addr.sun_path, ipcSocketPath_.c_str(), sizeof(addr.sun_path) - 1);
+        if (connect(ipcSocketFd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0) {
+            // Normal logo após o fork: o mpv ainda não criou o socket.
+            // Tenta de novo no próximo frame (o comando fica pendente).
+            close(ipcSocketFd_);
+            ipcSocketFd_ = -1;
+            return;
+        }
+    }
+
+    if (!pendingCommand_.empty()) {
+        ssize_t n = write(ipcSocketFd_, pendingCommand_.data(), pendingCommand_.size());
+        if (n == static_cast<ssize_t>(pendingCommand_.size())) pendingCommand_.clear();
+    }
+
+    char buf[1024];
+    for (;;) {
+        ssize_t n = read(ipcSocketFd_, buf, sizeof(buf));
+        if (n <= 0) break;
+        ipcReadBuffer_.append(buf, static_cast<size_t>(n));
+    }
+
+    size_t searchFrom = 0;
+    for (;;) {
+        size_t newlinePos = ipcReadBuffer_.find('\n', searchFrom);
+        if (newlinePos == std::string::npos) break;
+        HandleIpcLine(ipcReadBuffer_.substr(searchFrom, newlinePos - searchFrom));
+        searchFrom = newlinePos + 1;
+    }
+    ipcReadBuffer_.erase(0, searchFrom);
+}
+
+void VideoPlayer::HandleIpcLine(const std::string &line) {
+    if (!active_) return;
+
+    // Resposta do nosso `loadfile`: id da entrada da playlist que este
+    // Play() criou. Eventos de outras entradas (o vídeo anterior sendo
+    // interrompido, por exemplo) são ignorados por esse id.
+    if (JsonIntField(line, "request_id") == loadRequestId_) {
+        currentEntryId_ = JsonIntField(line, "playlist_entry_id");
+        if (currentEntryId_ >= 0 && currentEntryId_ == lastStartedEntryId_) currentStarted_ = true;
+        if (currentEntryId_ < 0) ended_ = true; // loadfile recusado
+        return;
+    }
+
+    std::string event = JsonStringField(line, "event");
+    if (event == "start-file") {
+        lastStartedEntryId_ = JsonIntField(line, "playlist_entry_id");
+        if (lastStartedEntryId_ == currentEntryId_) currentStarted_ = true;
+    } else if (event == "playback-restart") {
+        // "Primeiro quadro de verdade saindo" — sinal que o próprio mpv
+        // documenta como definitivo (não `time-pos`, que podia avançar
+        // antes do quadro estar na tela no RK3229: ver known-issues -5).
+        if (currentStarted_ && !ended_ && !videoConfirmedPlaying_) {
+            videoConfirmedPlaying_ = true;
+            XMapRaised(display_, videoWindow_);
+            XFlush(display_);
+            windowMapped_ = true;
+        }
+    } else if (event == "end-file") {
+        if (JsonIntField(line, "playlist_entry_id") != currentEntryId_) return;
+        std::string reason = JsonStringField(line, "reason");
+        if (reason == "eof" || reason == "error") {
+            // Esconde NA HORA: antes a janela (fundo preto) ficava na tela
+            // entre o fim do vídeo e a troca de slide — a "tela preta ao
+            // final" relatada em 2026-09-30.
+            ended_ = true;
+            HideWindow();
+        }
+    }
+}
+
+bool VideoPlayer::IsVideoActuallyPlaying() {
+    Pump();
+    return videoConfirmedPlaying_;
+}
+
+bool VideoPlayer::HasEnded() {
+    Pump();
+    if (!ended_ || endReported_) return false;
+    endReported_ = true;
     return true;
 }
 
