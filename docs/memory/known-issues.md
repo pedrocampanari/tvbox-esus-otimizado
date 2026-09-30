@@ -1,6 +1,80 @@
 # Problemas e decisões em aberto conhecidas
 
-## -7. WiFi onboard (chip SSV6051) não funciona sob Armbian — bug conhecido da comunidade, sem fix; workaround adotado: dongle USB
+## -9. `yt-dlp` sem runtime JavaScript no dispositivo — EM ABERTO (funciona hoje, risco futuro)
+Visto rodando o `yt-dlp` à mão no RK3229 em 2026-09-29: `WARNING:
+[youtube] No supported JavaScript runtime could be found ... YouTube
+extraction without a JS runtime has been deprecated, and some formats
+may be missing`. Hoje os 10 vídeos baixam normalmente em H.264 (cache
+e streaming), mas o YouTube vem exigindo JS pra decifrar formatos — é
+provável que um dia pare de funcionar sem runtime. Opções (não
+aplicadas, custam disco/decisão): instalar `deno` (padrão do yt-dlp) ou
+`nodejs` do apt + `--js-runtimes node` (teria que entrar nos argumentos
+do `src/video_cache.cpp` e do `ytdl_hook` em `src/player.cpp`).
+Mitigação já existente: o cache mantém os vídeos do boot anterior se o
+download falhar, então uma quebra do yt-dlp não apaga a tela.
+
+## -8. Controle remoto VOL+/VOL-/MUTE nunca ajustavam nada: nenhum mixer ALSA — RESOLVIDO em 2026-09-29 (testado no dispositivo)
+Diagnóstico via SSH no RK3229: `amixer -c 0|1|2 scontrols` vazio nas
+três placas (analog, SPDIF, HDMI) — o HDMI deste SoC não tem volume em
+hardware. `AdjustVolume()` falhava sempre (e o aviso nem aparecia no
+`kiosk.log` porque o stdout era bufferizado). Além disso a placa ALSA
+padrão era a **analógica** (card 0), não o HDMI da TV.
+
+Correção (`install.sh`, arquivo próprio
+`/etc/alsa/conf.d/99-tvbox-hdmi-softvol.conf`, sem tocar no
+`/etc/asound.conf` do pacote `armbian-bsp-cli`): `pcm.!default` = plug →
+`softvol` (cria o controle "Master") → `dmix` (vários processos no
+HDMI ao mesmo tempo) → `hw:HDMI,0`; `ctl.!default` = HDMI.
+Particularidades:
+- O controle "Master" do softvol só existe depois que alguém abre o PCM
+  padrão uma vez → `install.sh` e `exec.sh` tocam 0,1s de silêncio.
+- softvol não tem chave on/off → MUTE é emulado no app (volume 0; o
+  próximo MUTE devolve o volume anterior). `src/remote_control.cpp`
+  detecta sozinho se o mixer tem chave de verdade e usa `toggle` nesse
+  caso.
+- O kiosk é desligado tirando da tomada (sem `alsactl store` do
+  shutdown) → o app roda `alsactl store` a cada ajuste e o `exec.sh`
+  faz `alsactl restore` ao iniciar.
+- mpv agora roda com `--no-audio` (o vídeo sempre foi mudo, igual ao
+  site) — o volume do controle afeta o Chromium (painel de chamadas).
+Testado no dispositivo injetando `EV_KEY` em `/dev/input/event0`
+(mesmo caminho do receptor IR): VOL- 100→90%, MUTE →0%, MUTE →90%,
+VOL+ →100%, indicador no rodapé confirmado por captura de frames.
+Não testado ainda: o controle físico de verdade e o som audível na TV.
+
+## -7. WiFi onboard (SSV6051) não funciona sob Armbian — driver `ssv6x5x` TESTADO em 2026-09-30 e DESCARTADO; caminho: dongle USB
+
+### Teste do driver `ssv6x5x` (2026-09-30, no dispositivo) — não funciona, não repetir
+Em 2026-09-29 levantei a hipótese de o chip ser SV6256P (`SSV6006C0`,
+driver `ssv6x5x`) e não SSV6051, porque os dois usam o mesmo ID SDIO
+`3030:3030`. **Hipótese errada.** A pedido do usuário, instalei os
+headers (`linux-headers-current-rockchip` + `libssl-dev`/`libelf-dev`/
+`libzstd-dev`) e compilei o port
+<https://github.com/cdhigh/armbian_sv6256p> (commit `5b7824a`) no próprio
+RK3229: compilou limpo, `vermagic` idêntico ao kernel `6.18.54`. Carregado
+tanto depois do `ssv6051` quanto sozinho desde um boot limpo (com o
+`ssv6051` na blacklist), o resultado foi o mesmo:
+```
+TU_SSV6XXX_SDIO mmc1:0001:1: vendor = 0x3030 device = 0x3030
+TU_SSV6XXX_SDIO mmc1:0001:1: CHIP ID: \xc0
+```
+Os 4 registradores de ID do chip voltam praticamente zerados (só um byte
+`0xC0`), o driver não reconhece o chip e não cria a `wlan`. A thread do
+fórum abaixo mostra que o chip destas placas se identifica como
+`RSV6200A0-201311`, ou seja, **SSV6051 mesmo**. O problema continua
+sendo o da thread: escritas via SDIO não persistem no chip, sem fix
+conhecido.
+
+**Revertido**: o módulo `ssv6x5x` e o diretório de build foram removidos
+do dispositivo (`depmod -a`). Ficou só a blacklist do `ssv6051` (o mesmo
+estado que o `install.sh` deixa). Headers do kernel e libs `-dev`
+também removidos (`apt purge` + `apt-get clean`, a pedido do usuário):
+disco em 2,6GB usados, abaixo dos 2,9GB de antes do teste.
+
+**Caminho restante**: dongle USB WiFi (Realtek RTL8188EUS/RTL8192EU,
+driver nativo no kernel), ver instruções do `install.sh`.
+
+### Diagnóstico original (2026-09-29, parte 20)
 Usuário achou `armbian-config` com opção de trocar de kernel, pensando
 em usar isso pra resolver o WiFi que não funcionava. Antes de mexer no
 kernel (risco real: destabilizaria tudo que já validamos nesta sessão —

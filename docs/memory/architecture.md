@@ -14,10 +14,14 @@ tvbox_esus_app (Raylib, C++)
  ├─ desenha: header, footer, slide de texto, slide de imagem (via textura)
  ├─ thread de scraping: poll HTTP a cada N segundos (default 30s, mesmo
  │  intervalo do fallback do app original) — não mantém conexão persistente
+ ├─ thread de cache de vídeos (VideoCache): baixa em disco, um por vez,
+ │  o PRÓXIMO vídeo da rotação (`nice 19 ionice -c3 yt-dlp` + ffmpeg
+ │  pro merge) — ver "Cache de vídeos" abaixo
  └─ quando o slide ativo é vídeo:
      └─ spawna um processo `mpv --wid=<janela X11 filha> --gpu-context=x11egl
-        --ytdl=yes ...` posicionado exatamente sobre a área do banner,
-        passando a URL da campanha como está; o próprio mpv resolve
+        --loop-file=no --no-audio ...` posicionado exatamente sobre a área
+        do banner, tocando o ARQUIVO DO CACHE quando existe; senão
+        passa a URL da campanha como está (streaming) e o próprio mpv resolve
         internamente (via seu hook `ytdl_hook` + `yt-dlp`) quando não é
         um arquivo direto, e decodifica/desenha nessa janela X11 (fora
         do pipeline Raylib/OpenGL, mas dentro da MESMA hierarquia de
@@ -92,8 +96,8 @@ problema real no hardware (ver [[known-issues]]).
      — não uma segunda janela top-level `override-redirect`
      posicionada manualmente, que era a v1). Posição/tamanho relativos
      ao pai, não coordenadas absolutas de tela.
-  2. Lança `mpv --wid=<id> --gpu-context=x11egl --loop-file=inf
-     --mute=yes --ytdl=yes --ytdl-format=<kYtdlFormatSelector> ...`
+  2. Lança `mpv --wid=<id> --gpu-context=x11egl --loop-file=no
+     --no-audio --ytdl=yes --ytdl-format=<kYtdlFormatSelector> ...`
      passando a URL da campanha **como está** (arquivo direto para
      `upload`/`direto`; URL original do post/vídeo para
      `youtube`/`instagram`/`facebook`). Nunca embutimos o player
@@ -111,7 +115,14 @@ problema real no hardware (ver [[known-issues]]).
      vídeo e áudio em URLs separadas; só o `mpv` sabe tocar isso sem
      mux/ffmpeg. Ver [[known-issues]] item 5.
   4. Ao trocar de slide, desmapeia (hide) a janela do mpv e mata o
-     processo; ao voltar pra um slide de vídeo, recria.
+     processo (SIGTERM, 1s, SIGKILL — nunca espera sem limite); ao
+     voltar pra um slide de vídeo, recria. O slide de vídeo termina
+     quando o mpv sai sozinho no fim do arquivo (`HasExited()`), não por
+     `duracao_segundos`. O mpv nasce com `PR_SET_PDEATHSIG=SIGKILL`: se o
+     app cair, o kernel mata o mpv junto (antes ele ficava órfão
+     decodificando). `Shutdown()` tem que rodar ANTES do `CloseWindow()`
+     do Raylib (a janela de vídeo é filha e morre junto; mexer nela
+     depois = `BadWindow` = Xlib aborta o processo).
   5. `Init()`/`Play()` usam `XSync` (não `XFlush`) depois de criar/mapear
      a janela — sem isso existe uma corrida real onde o `mpv` (processo
      separado, conexão X11 própria) tenta anexar numa janela que o
@@ -119,7 +130,8 @@ problema real no hardware (ver [[known-issues]]).
      quando o primeiro slide já é vídeo). Ver [[known-issues]] item 5.
   6. **A janela de vídeo só é mapeada quando `IsVideoActuallyPlaying()`
      confirma** (via socket IPC JSON do mpv, `--input-ipc-server` +
-     propriedade `time-pos`) que o mpv já está de fato tocando, não só
+     evento `playback-restart` — ver [[known-issues]] item -5) que o mpv
+     já está de fato tocando, não só
      resolvendo/bufferizando. Enquanto isso, `apps/tvbox_esus_app.cpp`
      desenha `DrawLoadingSlide` (spinner + título/subtítulo). Timeout de
      `kVideoLoadTimeoutSeconds` (config.h) — se não confirmar a tempo,
@@ -130,6 +142,38 @@ problema real no hardware (ver [[known-issues]]).
   paleta/tipografia do [[frontend-contract]]. Tipografia: Liberation
   Sans carregada de `assets/fonts/` (ver [[known-issues]] item 3), não a
   fonte bitmap padrão do Raylib.
+
+- `include/video_cache.h` / `src/video_cache.cpp` — cache local dos
+  vídeos, ver seção "Cache de vídeos" abaixo.
+
+## Cache de vídeos (2026-09-29)
+Pedido do usuário: baixar os vídeos em vez de fazer streaming a cada
+exibição, baixando só quando o dispositivo reinicia, e sem busca
+"linear" (nada de baixar tudo antes de começar; um vídeo exibido por
+completo → registro → próximo), sem perder as animações.
+- **Onde**: `cache/videos/` relativo ao cwd (`kVideoCacheDir`,
+  `include/video_config.h`), na flash — nunca tmpfs (RAM é o recurso
+  escasso). Arquivo `<fnv64(url)>-<boot_id[0:8]>.<ext>` + `manifest.tsv`
+  (o "registro": chave, arquivo, boot_id, bytes, data, url — reescrito
+  via tmp+rename a cada download).
+- **Quando**: cada vídeo é baixado de novo **uma vez por boot** do
+  dispositivo (`/proc/sys/kernel/random/boot_id`). Reinício só do app
+  (crash → `exec.sh`) não baixa nada. Arquivo de boot anterior continua
+  sendo tocado até o novo terminar — sem rede no boot, o kiosk segue
+  com o conteúdo que já tinha. Vídeo sem nenhum arquivo local cai no
+  streaming antigo (só a primeira volta depois de instalar).
+- **Ordem**: uma única thread, um download por vez, sempre o próximo
+  vídeo da rotação a partir do slide atual (`SetCurrentIndex`) que
+  ainda não está fresco neste boot. Falha → retry com backoff
+  (30s…10min). Não baixa com menos de 512MB livres.
+- **Custo**: `nice -n 19` + `ionice -c 3` (nunca disputa com o mpv/
+  Chromium); mesmo seletor de formato do streaming (H.264 ≤720p), merge
+  vídeo+áudio pelo ffmpeg só com cópia de stream (qualidade intacta).
+  Medido no RK3229: 10 vídeos, 63MB, ~5 min, com o kiosk rodando.
+- **Nunca trava a UI**: download fora da thread principal; o
+  `RunCaptureStdout` aceita um flag de cancelamento (encerramento do
+  app mata o `yt-dlp` e o `ffmpeg` neto via grupo de processos).
+- Precisa do pacote `ffmpeg` (no `install.sh`).
 
 ## Restrição de headers: `player.cpp`/`player.h`/`native_window.cpp` nunca podem incluir `raylib.h`
 Descoberto testando de verdade em 2026-09-26 (não é teórico): `<X11/
@@ -177,6 +221,12 @@ de ancoragem da janela principal não afeta o posicionamento do vídeo.
   documentar `--hwdec=rkmpp` como override pra quem builda especificamente
   pro driver Rockchip MPP do RK3229) — nunca decode de vídeo em software
   dentro do processo principal.
+- FPS dinâmico no loop principal: 30fps só com animação na tela
+  (spinner de carregamento, indicador de volume), 10fps no resto
+  (texto/imagem estáticos, ou o mpv desenhando o vídeo na janela dele).
+  Medido no RK3229: CPU do app ~16% → ~9%.
+- mpv com `--no-audio`: o vídeo é mudo (igual ao site); sem trilha de
+  áudio não decodifica áudio nem abre o ALSA.
 - Um único binário C++ (raylib estático via FetchContent) — sem runtime
   adicional (nada de Node/Python/Electron; `yt-dlp` é Python, mas quem o
   invoca é o próprio `mpv` — via `ytdl_hook` — só quando o vídeo não é
@@ -206,7 +256,10 @@ Duas teclas são tratadas em lugares diferentes, por decisão deliberada:
   `gpio_ir_recv` — não assume um número de `eventN` fixo, que muda
   conforme a ordem de enumeração a cada boot) e ajusta o volume via
   `amixer` (fork/exec pontual, mesmo princípio de "processo em vez de
-  lib" usado pra curl/mpv — sem linkar libasound). Motivo de ficar
+  lib" usado pra curl/mpv — sem linkar libasound). O HDMI do RK3229
+  não tem mixer em hardware: o controle "Master" vem de um `softvol`
+  configurado pelo `install.sh` (ver [[known-issues]] item -8); MUTE é
+  emulado (volume 0 ↔ restaura) quando o mixer não tem chave on/off. Motivo de ficar
   DENTRO do processo, ao contrário do POWER: o pedido era mostrar um
   indicador visual de volume no mesmo estilo do resto do kiosk
   (`ui.h::DrawVolumeOsd`), e só o processo Raylib pode desenhar isso.
@@ -234,7 +287,9 @@ código). Header/footer, ao contrário, nunca são cobertos pelo `mpv`
   sozinho). Testado num RK322x real: sem isso, o app crasha
   (`Segmentation fault`) na criação do contexto gráfico, porque a Mali-400
   do RK3229 não fala OpenGL desktop, só ES. Ver [[known-issues]] item 0.
-- `Makefile` é um atalho fino em cima do CMake (`make` = configure+build,
+- `Makefile` é um atalho fino em cima do CMake (`make` = configure na
+  primeira vez + build incremental SEMPRE — antes o alvo era o binário
+  sem dependências e `make` depois de `git pull` não recompilava nada;
   `make run`, `make clean`) — mantido porque já existia no repo, mas não
   é mais um segundo pipeline de compilação C independente.
 - Dependências de runtime no dispositivo alvo (fora do binário): `mpv`,

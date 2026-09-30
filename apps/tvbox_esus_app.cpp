@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <csignal>
+#include <cstdio>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -21,6 +23,7 @@
 #include "remote_control.h"
 #include "scraper.h"
 #include "ui.h"
+#include "video_cache.h"
 
 using namespace kiosk;
 
@@ -28,14 +31,17 @@ namespace {
 
 std::mutex g_campaignsMutex;
 std::vector<Campaign> g_campaigns;
+// Incrementado a cada troca de g_campaigns: o loop principal só copia a
+// lista quando ela muda de fato, não a cada frame.
+std::atomic<unsigned> g_campaignsGeneration{0};
 std::atomic<bool> g_running{true};
 
 Campaign DefaultWaitingCampaign() {
     Campaign c;
     c.id = "tecnico:aguardando-informacoes";
     c.tipo = CampaignType::Texto;
-    c.titulo = "SECRETARIA MUNICIPAL DE SAUDE";
-    c.subtitulo = "Aguardando informacoes";
+    c.titulo = "SECRETARIA MUNICIPAL DE SAÚDE";
+    c.subtitulo = "Aguardando informações";
     c.duracao_segundos = 15;
     return c;
 }
@@ -47,6 +53,7 @@ void ScraperThreadLoop(const std::string &displayUrl) {
         if (scraper.Refresh(fetched) && !fetched.empty()) {
             std::lock_guard<std::mutex> lock(g_campaignsMutex);
             g_campaigns = std::move(fetched);
+            g_campaignsGeneration.fetch_add(1);
         }
         for (int waited = 0; waited < kScrapePollIntervalSeconds && g_running.load(); ++waited) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -82,7 +89,27 @@ Texture2D DownloadImageTexture(const std::string &url) {
 
 } // namespace
 
+// Fim do slide de vídeo: o vídeo tocou inteiro (mpv saiu sozinho). Teto
+// de segurança caso o mpv nunca termine (stream ao vivo, travamento).
+constexpr double kVideoMaxSlideSeconds = 20.0 * 60.0;
+// Mínimo que um slide de vídeo com falha fica na tela (spinner) antes
+// de avançar — evita piscar slides em sequência quando está tudo
+// falhando (sem rede e sem cache).
+constexpr double kVideoFailureHoldSeconds = 3.0;
+
+void HandleTerminationSignal(int) { g_running.store(false); }
+
 int main() {
+    // SIGTERM/SIGINT (exec.sh, systemd, Ctrl+C): sai pelo caminho normal
+    // do loop, que para o mpv e o download em andamento antes de fechar.
+    std::signal(SIGTERM, HandleTerminationSignal);
+    std::signal(SIGINT, HandleTerminationSignal);
+
+    // stdout/stderr vão pro kiosk.log (exec.sh): sem isto, avisos do
+    // TraceLog ficam presos no buffer e só aparecem muito depois (ou
+    // nunca, num crash).
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+
     SetConfigFlags(FLAG_WINDOW_UNDECORATED);
     SetTraceLogLevel(LOG_WARNING);
     InitWindow(100, 100, "TV Box e-SUS Otimizado");
@@ -95,7 +122,7 @@ int main() {
     int windowX = kAnchorWindowToRightEdge ? (monitorW - windowW) : 0;
     SetWindowSize(windowW, windowH);
     SetWindowPosition(windowX, 0);
-    SetTargetFPS(30); // slideshow estático na maior parte do tempo: 30fps já sobra e economiza CPU/energia no RK3229.
+    SetTargetFPS(30); // ajustado por frame no loop (ver "FPS dinâmico").
 
     LoadUiFonts();
 
@@ -108,7 +135,12 @@ int main() {
         std::vector<Campaign> fixed = LoadFixedCampaigns(kFixedCampaignsConfigPath);
         std::lock_guard<std::mutex> lock(g_campaignsMutex);
         g_campaigns = std::move(fixed);
+        g_campaignsGeneration.fetch_add(1);
     }
+
+    // Cache local dos vídeos (ver include/video_cache.h): baixa em
+    // segundo plano, um por vez, sempre o próximo da rotação.
+    VideoCache videoCache(kVideoCacheDir);
 
     unsigned long nativeWindowId = GetNativeX11WindowId(GetWindowHandle());
     if (nativeWindowId == 0) {
@@ -138,41 +170,56 @@ int main() {
     bool volumeOsdMuted = false;
 
     size_t currentIndex = 0;
+    bool startSlide = true; // força (re)início mesmo se o id não mudou (lista de 1 item)
     double slideStartTime = GetTime();
+    double slideDeadline = 0.0;
     std::string activeId;
     CampaignType activeType = CampaignType::Texto;
     Texture2D imageTexture{};
     std::string imageTextureUrl;
     bool videoConfirmedStarted = false;
 
+    std::vector<Campaign> snapshot;
+    unsigned snapshotGeneration = ~0u;
+
     while (g_running.load() && !WindowShouldClose()) {
-        std::vector<Campaign> snapshot;
-        {
-            std::lock_guard<std::mutex> lock(g_campaignsMutex);
-            snapshot = g_campaigns;
+        if (g_campaignsGeneration.load() != snapshotGeneration) {
+            {
+                std::lock_guard<std::mutex> lock(g_campaignsMutex);
+                snapshot = g_campaigns;
+                snapshotGeneration = g_campaignsGeneration.load();
+            }
+            if (snapshot.empty()) snapshot.push_back(DefaultWaitingCampaign());
+            videoCache.SetCampaigns(snapshot);
         }
-        if (snapshot.empty()) snapshot.push_back(DefaultWaitingCampaign());
         currentIndex %= snapshot.size();
 
         const Campaign &active = snapshot[currentIndex];
         int durationSeconds = active.duracao_segundos > 0 ? active.duracao_segundos
                                                             : kDefaultSlideDurationSeconds;
 
-        bool slideChanged = active.id != activeId;
-        if (slideChanged) {
+        if (startSlide || active.id != activeId) {
+            startSlide = false;
             activeId = active.id;
             activeType = active.tipo;
             slideStartTime = GetTime();
             videoConfirmedStarted = false;
+            videoCache.SetCurrentIndex(currentIndex);
 
-            if (activeType == CampaignType::Video && playerReady) {
-                if (!player.Play(active)) {
-                    // Falha ao resolver/tocar: comporta-se como o app
-                    // original (onFalha) e antecipa o avanco de slide.
-                    slideStartTime = GetTime() - durationSeconds;
+            if (activeType == CampaignType::Video) {
+                // Vídeo: o slide dura o vídeo inteiro (ver HasExited
+                // abaixo); o deadline aqui é só o teto de segurança.
+                slideDeadline = slideStartTime + kVideoMaxSlideSeconds;
+                if (!playerReady) {
+                    slideDeadline = slideStartTime + durationSeconds;
+                } else if (!player.Play(active, videoCache.LocalPathFor(active.video_url))) {
+                    // Falha ao iniciar: comporta-se como o onFalha do app
+                    // original e avança (depois de um respiro mínimo).
+                    slideDeadline = slideStartTime + kVideoFailureHoldSeconds;
                 }
-            } else if (playerReady) {
-                player.Stop();
+            } else {
+                slideDeadline = slideStartTime + durationSeconds;
+                if (playerReady) player.Stop();
             }
 
             if (activeType == CampaignType::Imagem && active.imagem_url != imageTextureUrl) {
@@ -182,30 +229,35 @@ int main() {
             }
         }
 
-        // Sem `playerReady` não tem o que esperar (nenhum vídeo vai
-        // tocar de qualquer forma) — trata como "pronto" e deixa o
-        // placeholder normal + o cronômetro de duração seguirem sozinhos,
-        // igual o comportamento de antes desta animação de carregamento
-        // existir. Com o player disponível, só considera pronto quando o
+        // Com o player disponível, só considera o vídeo pronto quando o
         // mpv confirmar via IPC que já está de fato decodificando —
-        // enquanto isso, mostra o spinner. Se demorar demais (mesmo
-        // timeout do carregamento de iframe do site original), desiste e
-        // avança, igual o onFalha de lá.
+        // enquanto isso, mostra o spinner. Se demorar demais ou o mpv
+        // sair antes (URL/arquivo inválido), desiste e avança, igual o
+        // onFalha do site original. Depois de confirmado, o slide acaba
+        // quando o mpv sai sozinho no fim do arquivo.
         bool videoReady = !playerReady;
         if (activeType == CampaignType::Video && playerReady) {
-            if (videoConfirmedStarted) {
-                videoReady = true;
-            } else if (player.IsVideoActuallyPlaying()) {
+            double now = GetTime();
+            if (!videoConfirmedStarted && player.IsVideoActuallyPlaying()) {
                 videoConfirmedStarted = true;
-                videoReady = true;
-            } else if (GetTime() - slideStartTime >= kVideoLoadTimeoutSeconds) {
+            }
+            videoReady = videoConfirmedStarted;
+            if (player.HasExited()) {
+                if (videoConfirmedStarted) {
+                    videoCache.RecordShown(active);
+                    slideDeadline = now;
+                } else {
+                    slideDeadline = std::max(now, slideStartTime + kVideoFailureHoldSeconds);
+                }
+            } else if (!videoConfirmedStarted && now - slideStartTime >= kVideoLoadTimeoutSeconds) {
                 player.Stop();
-                slideStartTime = GetTime() - durationSeconds;
+                slideDeadline = now;
             }
         }
 
-        if (GetTime() - slideStartTime >= durationSeconds) {
+        if (GetTime() >= slideDeadline) {
             currentIndex = (currentIndex + 1) % snapshot.size();
+            startSlide = true;
         }
 
         RemoteButton remoteButton = remote.PollButtonPress();
@@ -244,6 +296,13 @@ int main() {
             }
         }
         bool showVolumeOsd = GetTime() < volumeOsdUntil;
+
+        // FPS dinâmico: 30 só quando algo anima (spinner de carregamento,
+        // indicador de volume); no resto do tempo a tela é estática (texto,
+        // imagem, ou o mpv desenhando o vídeo na janela dele) e 10fps
+        // bastam — corta boa parte do CPU do próprio app no RK3229.
+        bool animating = showVolumeOsd || (activeType == CampaignType::Video && !videoReady);
+        SetTargetFPS(animating ? 30 : 10);
 
         int screenW = GetScreenWidth();
         int screenH = GetScreenHeight();
@@ -297,7 +356,7 @@ int main() {
     if (scraperThread.joinable()) scraperThread.join();
 
     if (imageTexture.id != 0) UnloadTexture(imageTexture);
-    player.Stop();
+    player.Shutdown();
     UnloadUiFonts();
     CloseWindow();
     return 0;

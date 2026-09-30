@@ -75,10 +75,12 @@ constexpr Color kColorTextAccent = {0xbf, 0xdb, 0xfe, 0xff};
 // Textos de header/footer confirmados ao vivo em 2026-09-26 (painel real
 // em produção, não o fallback técnico genérico). Ver
 // docs/memory/frontend-contract.md. Sem leitura de configuracoes_tv
-// neste modo (ver known-issues.md item 5), então ficam fixos aqui.
+// neste modo (ver known-issues.md item 6), então ficam fixos aqui.
+// UTF-8 com acentuação correta (revisão ortográfica de 2026-09-29): a
+// fonte é carregada com os glifos de PT-BR (ver src/ui.cpp).
 constexpr const char *kHeaderTitle = "PREFEITURA MUNICIPAL";
-constexpr const char *kHeaderSubtitle = "Secretaria Municipal de Saude";
-constexpr const char *kFooterTitle = "TRES LAGOAS/MS";
+constexpr const char *kHeaderSubtitle = "Secretaria Municipal de Saúde";
+constexpr const char *kFooterTitle = "TRÊS LAGOAS/MS";
 constexpr const char *kFooterSubtitle = "Cada dia melhor";
 
 // kYtdlFormatSelector mora em include/video_config.h (motivo: não pode

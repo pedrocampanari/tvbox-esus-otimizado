@@ -1,5 +1,124 @@
 # Handoff de sessão
 
+## Sessão de 2026-09-30 (parte 22) — driver WiFi `ssv6x5x` testado no dispositivo: não funciona, revertido
+
+Usuário pediu pra rodar os comandos do item -7 de [[known-issues]].
+Instalei os headers (faltavam `libssl-dev`/`libelf-dev`/`libzstd-dev`,
+resolvido com `apt-get -f install`; simulado antes, sem remoções),
+compilei o `ssv6x5x` no RK3229 (sem erros, `vermagic` ok), comparei
+firmware/cfg do repo com os do `armbian-firmware` (idênticos, nada
+copiado), apliquei a blacklist do `ssv6051` e carreguei o módulo, uma vez
+a quente e outra depois de reboot limpo. Nas duas vezes: `CHIP ID: \xc0`,
+nenhuma `wlan`. O chip é SSV6051 (`RSV6200A0`), então **a hipótese
+SV6256P da parte 21 estava errada**, e o item -7 foi reescrito. Módulo e
+build removidos do dispositivo. Depois, a pedido do usuário, headers +
+`libssl-dev`/`libelf-dev`/`libzstd-dev` purgados e `apt-get clean`
+(disco: 2,9GB → 2,6GB usados). WiFi: só com dongle USB.
+
+Efeito colateral útil: o dispositivo foi reiniciado duas vezes nesta
+sessão (boot real), mas o kiosk não estava rodando (X não sobe sozinho
+ainda, `startx` manual), então o refresh do cache por boot continua sem
+teste em boot real.
+
+---
+
+## Sessão de 2026-09-29 (parte 21) — ajustes finais de deploy: cache de vídeos, ortografia, volume, checkup geral (com SSH no RK3229 real)
+
+### Pedido do usuário
+"últimos ajustes para o deployment": (1) revisar ortografia do
+header/footer; (2) "ao puxar os vídeos, baixamos ele no sistema?" — não
+baixávamos (era streaming do mpv a cada exibição) → implementar cache,
+baixando só quando o dispositivo reinicia, com busca NÃO linear ("ao um
+vídeo ser mostrado por completo, salva o registro e busca pelo outro,
+sem perder as animações"); (3) revisar as operações do controle remoto;
+(4) procurar solução pro WiFi dentro do sistema; (5) checkup geral.
+Usuário liberou SSH root no dispositivo (`root@192.168.101.196`) —
+primeira sessão com acesso direto ao RK3229, tudo abaixo marcado
+"no dispositivo" foi visto/testado lá de verdade.
+
+### O que foi feito
+1. **Ortografia**: `kHeaderSubtitle` → "Secretaria Municipal de
+   Saúde", `kFooterTitle` → "TRÊS LAGOAS/MS", slide técnico →
+   "SECRETARIA MUNICIPAL DE SAÚDE"/"Aguardando informações"; títulos de
+   `config/campaigns.conf` só com acentuação corrigida (conteúdo
+   intacto). Glifos ª º ° adicionados à fonte. **Screenshot do
+   dispositivo confirma os acentos renderizando.** "ROLTER CEM" ficou
+   como está (provável "HOLTER", não confirmado — perguntar ao usuário).
+2. **Cache de vídeos** (`include/video_cache.h`/`src/video_cache.cpp`,
+   detalhes em [[architecture]] > "Cache de vídeos"): thread única em
+   segundo plano, baixa via `yt-dlp` (+`ffmpeg` pro merge, sem
+   recodificar) sempre o PRÓXIMO vídeo da rotação que ainda não foi
+   baixado neste boot (`boot_id`); arquivo de boot anterior segue
+   tocando até o novo chegar; sem arquivo nenhum → streaming (só na
+   primeira volta). `manifest.tsv` = registro. Slide de vídeo agora
+   termina quando o vídeo termina (`--loop-file=no` + `HasExited()`),
+   `duracao_segundos` ignorado para vídeo.
+3. **Volume/controle remoto**: diagnóstico no dispositivo — NENHUMA placa
+   ALSA tinha mixer (`amixer scontrols` vazio), então VOL±/MUTE nunca
+   funcionaram de verdade; e a saída padrão era o analógico, não o HDMI.
+   Corrigido com softvol+dmix ([[known-issues]] item -8), MUTE emulado
+   (volume 0 ↔ restaura), VOL± repetindo ao segurar, volume persistido
+   (`alsactl store`) e restaurado no `exec.sh`.
+4. **WiFi**: levantei a hipótese de o chip ser SV6256P (`ssv6x5x`).
+   **Descartada na parte 22** (testado, o chip é SSV6051 mesmo).
+   **Não instalado**: compilar/carregar módulo de kernel de terceiros no
+   dispositivo foi bloqueado pelo classificador de permissões desta
+   sessão — comandos documentados pro usuário rodar.
+5. **Checkup — bugs reais achados e corrigidos**:
+   - `Makefile`: alvo sem dependências → `make` depois de `git pull`
+     NÃO recompilava (dispositivo estava rodando `975cba5`, 2 commits
+     atrás). Agora sempre chama o build incremental do CMake.
+   - `mpv` ficava ÓRFÃO decodificando quando o app morria (crash/
+     SIGTERM) — confirmado testando; cada reinício do `exec.sh` somaria
+     um mpv a 100% de CPU. Corrigido com `PR_SET_PDEATHSIG` (mpv e
+     filhos do `RunCaptureStdout`) + handler de SIGTERM/SIGINT.
+   - Saída do app sempre com código 1 (`BadWindow` no `XUnmapWindow`:
+     destrutor do player rodava depois do `CloseWindow`) → novo
+     `VideoPlayer::Shutdown()` antes do `CloseWindow`.
+   - `Stop()` esperava o mpv morrer sem limite (podia congelar a UI) →
+     SIGTERM, 1s, SIGKILL.
+   - Lista de 1 item nunca reiniciava o slide (detecção por id) →
+     `startSlide`.
+   - `RunCaptureStdout` podia girar sem fim com `poll()` < 0/POLLERR;
+     agora mata o grupo de processos (yt-dlp+ffmpeg) no timeout.
+   - stdout do app bufferizado no `kiosk.log` → `setvbuf` por linha.
+   - Otimização: FPS dinâmico (30 só com spinner/OSD, 10 no resto) e a
+     lista de campanhas só é copiada quando muda. CPU do app no
+     dispositivo: ~16% → ~9%. `--no-audio` no mpv (vídeo já era mudo):
+     não decodifica áudio nem ocupa o HDMI.
+
+### Verificado de verdade
+- Host: build limpo sem warnings; app rodando 5 min com vídeos do
+  cache em rotação; SIGTERM → exit 0 sem mpv sobrando; SIGKILL → mpv
+  morre junto.
+- **No RK3229**: `git pull` + arquivos copiados + `apt install ffmpeg` +
+  `make` (3,5 min, sem warnings); os 10 vídeos baixados em ~5 min (63
+  MB) com o kiosk rodando, uma falha transitória recuperada pelo retry;
+  vídeo tocando do cache confirmado por screenshot (`ffmpeg -f
+  x11grab`); reinício do app no mesmo boot sem nenhum download; VOL-/
+  MUTE/MUTE/VOL+ injetados em `/dev/input/event0` mudando o volume
+  (90% → 0% → 90% → 100%) e o indicador "VOLUME: 90%" aparecendo no
+  rodapé (sequência de frames capturada).
+
+### Estado do dispositivo ao fim da sessão
+Working tree de `/root/tvbox-esus-otimizado` com as mudanças desta
+sessão **não commitadas** (copiadas via tar por SSH; nada foi
+commitado/pushado). Depois de commitar+pushar do host, no dispositivo:
+`git checkout -- . && git clean -fd include src && git pull` (ou
+`git stash`). `/etc/alsa/conf.d/99-tvbox-hdmi-softvol.conf` e o pacote
+`ffmpeg` já estão aplicados lá (o `install.sh` agora faz os dois).
+
+### O que falta
+- Boot real completo (tirar da tomada) pra confirmar: refresh do cache
+  por `boot_id`, `exec.sh` criando o "Master" e restaurando o volume.
+- ~~Driver WiFi `ssv6x5x`~~: testado na parte 22, não funciona.
+- `yt-dlp` sem runtime JavaScript ([[known-issues]] item -9).
+- Áudio dos vídeos: continuam mudos (igual ao site). O volume do
+  controle afeta o Chromium (painel de chamadas). Confirmar com o
+  usuário se é isso mesmo.
+
+---
+
 ## Sessão de 2026-09-29 (parte 20) — WiFi onboard (SSV6051) quebrado: pesquisa confirma bug conhecido, sem fix; adotado dongle USB
 
 ### Pedido do usuário

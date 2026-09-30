@@ -45,6 +45,7 @@ add_executable(${PROJECT_NAME}
   src/campaign_store.cpp
   src/native_window.cpp
   src/remote_control.cpp
+  src/video_cache.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include

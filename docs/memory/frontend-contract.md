@@ -111,3 +111,18 @@ A versão web ocupa `100vw x 100vh`. Nosso app deve abrir fixo em
 estrutura interna (header / banner rotativo / footer) dentro dessa faixa
 vertical estreita. Ver [[architecture]] para como isso afeta o
 dimensionamento de fontes e da janela de vídeo embutida.
+
+## Diferença deliberada: duração do slide de vídeo (2026-09-29)
+No site, todo slide (inclusive vídeo em loop no iframe) dura
+`duracao_segundos`. No nosso app, **o slide de vídeo dura o vídeo
+inteiro** (mpv sem loop; avança quando o vídeo termina) — pedido do
+usuário junto com o cache local de vídeos (ver [[architecture]] >
+"Cache de vídeos"). `duracao_segundos` continua valendo pra texto e
+imagem. O vídeo continua mudo, igual ao `mute=1` do site.
+
+## Textos em PT-BR
+Header/footer e `config/campaigns.conf` usam acentuação correta em
+UTF-8 ("Secretaria Municipal de Saúde", "TRÊS LAGOAS/MS"). A fonte é
+carregada só com os glifos de PT-BR (`src/ui.cpp`,
+`BuildPortugueseCodepoints`) — caractere fora dessa lista aparece como
+"?": adicionar lá se um texto novo precisar.

@@ -4,6 +4,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -31,13 +32,17 @@ std::string MakeIpcSocketPath() {
 
 VideoPlayer::VideoPlayer() = default;
 
-VideoPlayer::~VideoPlayer() {
+VideoPlayer::~VideoPlayer() { Shutdown(); }
+
+void VideoPlayer::Shutdown() {
     Stop();
     if (videoWindow_ && display_) {
         XDestroyWindow(display_, videoWindow_);
+        videoWindow_ = 0;
     }
     if (display_) {
         XCloseDisplay(display_);
+        display_ = nullptr;
     }
 }
 
@@ -99,11 +104,13 @@ std::string VideoPlayer::ResolveStreamUrl(const Campaign &campaign) const {
     return campaign.video_url;
 }
 
-bool VideoPlayer::Play(const Campaign &campaign) {
+bool VideoPlayer::Play(const Campaign &campaign, const std::string &localFile) {
     Stop();
     if (!display_ || !videoWindow_) return false;
 
-    std::string streamUrl = ResolveStreamUrl(campaign);
+    // Arquivo do cache local (include/video_cache.h) tem prioridade:
+    // sem rede, sem yt-dlp, sem buffering. Sem ele, streaming direto.
+    std::string streamUrl = localFile.empty() ? ResolveStreamUrl(campaign) : localFile;
     if (streamUrl.empty()) return false;
 
     videoConfirmedPlaying_ = false;
@@ -117,6 +124,12 @@ bool VideoPlayer::Play(const Campaign &campaign) {
     if (pid < 0) return false;
 
     if (pid == 0) {
+        // Se o app morrer (crash, SIGKILL), o kernel mata o mpv junto —
+        // sem isto ele ficava órfão decodificando em segundo plano (100%
+        // de um núcleo no RK3229) e o exec.sh subia outro por cima a cada
+        // reinício (confirmado testando em 2026-09-29).
+        prctl(PR_SET_PDEATHSIG, SIGKILL);
+        if (getppid() == 1) _exit(1); // pai já morreu antes do prctl
         int devNull = open("/dev/null", O_WRONLY);
         if (devNull >= 0) {
             dup2(devNull, STDOUT_FILENO);
@@ -145,8 +158,16 @@ bool VideoPlayer::Play(const Campaign &campaign) {
         // depender de auto-detecção). Bônus: decode por hardware sem
         // cópia extra (`vaapi` em vez de `vaapi-copy`) nesta sandbox.
         const char *gpuContextOpt = "--gpu-context=x11egl";
-        execlp("mpv", "mpv", wid.c_str(), gpuContextOpt, ipcOpt.c_str(), "--loop-file=inf",
-               "--mute=yes", "--no-osc", "--no-input-default-bindings", "--really-quiet",
+        // --loop-file=no: o slide de vídeo termina quando o vídeo termina
+        // (mpv sai sozinho no fim do arquivo, ver HasExited()) — pedido
+        // do usuário em 2026-09-29, em vez de repetir até estourar um
+        // duracao_segundos estimado.
+        // --no-audio: o vídeo sempre foi mudo (igual ao site original,
+        // `mute=1`); sem trilha de áudio o mpv nem decodifica/abre o
+        // ALSA — menos CPU e RAM no RK3229, e o HDMI fica livre pro
+        // Chromium (painel de chamadas).
+        execlp("mpv", "mpv", wid.c_str(), gpuContextOpt, ipcOpt.c_str(), "--loop-file=no",
+               "--no-audio", "--no-osc", "--no-input-default-bindings", "--really-quiet",
                "--hwdec=auto", "--ytdl=yes", ytdlPathOpt, ytdlFormat.c_str(), streamUrl.c_str(),
                static_cast<char *>(nullptr));
         _exit(127);
@@ -243,8 +264,18 @@ bool VideoPlayer::IsVideoActuallyPlaying() {
 
 void VideoPlayer::Stop() {
     if (mpvPid_ > 0) {
+        // SIGTERM e espera no máximo ~1s: um mpv travado (driver de vídeo,
+        // rede) não pode congelar o loop de desenho do kiosk.
         kill(mpvPid_, SIGTERM);
-        waitpid(mpvPid_, nullptr, 0);
+        bool reaped = false;
+        for (int i = 0; i < 20 && !reaped; ++i) {
+            reaped = waitpid(mpvPid_, nullptr, WNOHANG) != 0;
+            if (!reaped) usleep(50 * 1000);
+        }
+        if (!reaped) {
+            kill(mpvPid_, SIGKILL);
+            waitpid(mpvPid_, nullptr, 0);
+        }
         mpvPid_ = -1;
     }
     CloseIpcSocket();
@@ -255,11 +286,13 @@ void VideoPlayer::Stop() {
     }
 }
 
-bool VideoPlayer::IsPlaying() const {
+bool VideoPlayer::HasExited() {
     if (mpvPid_ <= 0) return false;
-    int status = 0;
-    pid_t r = waitpid(mpvPid_, &status, WNOHANG);
-    return r == 0; // 0 = ainda rodando
+    if (waitpid(mpvPid_, nullptr, WNOHANG) == 0) return false; // ainda rodando
+    // Já colhido aqui: zera o pid pra Stop() não mandar sinal pra um pid
+    // que o kernel pode ter reaproveitado.
+    mpvPid_ = -1;
+    return true;
 }
 
 } // namespace kiosk

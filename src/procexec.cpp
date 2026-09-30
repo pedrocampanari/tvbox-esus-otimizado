@@ -5,13 +5,14 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 namespace kiosk {
 
 bool RunCaptureStdout(const std::vector<std::string> &argv, int timeoutSeconds,
-                      std::string &outStdout) {
+                      std::string &outStdout, const std::atomic<bool> *cancel) {
     outStdout.clear();
     if (argv.empty()) return false;
 
@@ -26,13 +27,20 @@ bool RunCaptureStdout(const std::vector<std::string> &argv, int timeoutSeconds,
     }
 
     if (pid == 0) {
+        // Grupo de processos próprio (ver procexec.h): permite matar o
+        // filho E os netos dele de uma vez com kill(-pid).
+        setpgid(0, 0);
+        // Mesmo motivo do mpv (src/player.cpp): app morreu, filho morre.
+        prctl(PR_SET_PDEATHSIG, SIGKILL);
+
         // Filho: stdout -> pipe, stdin/stderr descartados pro devnull.
         close(outPipe[0]);
         dup2(outPipe[1], STDOUT_FILENO);
         close(outPipe[1]);
 
-        int devNull = open("/dev/null", O_WRONLY);
+        int devNull = open("/dev/null", O_RDWR);
         if (devNull >= 0) {
+            dup2(devNull, STDIN_FILENO);
             dup2(devNull, STDERR_FILENO);
             close(devNull);
         }
@@ -46,12 +54,14 @@ bool RunCaptureStdout(const std::vector<std::string> &argv, int timeoutSeconds,
         _exit(127); // execvp falhou
     }
 
-    // Pai.
+    // Pai. setpgid dos dois lados evita a corrida de matar o grupo antes
+    // do filho ter chegado a chamar setpgid ele mesmo.
+    setpgid(pid, pid);
     close(outPipe[1]);
 
     std::string buffer;
     char chunk[4096];
-    bool timedOut = false;
+    bool aborted = false;
     long deadlineMs = static_cast<long>(timeoutSeconds) * 1000L;
     long waitedMs = 0;
     const int stepMs = 100;
@@ -61,29 +71,39 @@ bool RunCaptureStdout(const std::vector<std::string> &argv, int timeoutSeconds,
     pfd.events = POLLIN;
 
     for (;;) {
+        if (cancel != nullptr && cancel->load()) {
+            aborted = true;
+            break;
+        }
         int rc = poll(&pfd, 1, stepMs);
-        if (rc > 0 && (pfd.revents & (POLLIN | POLLHUP))) {
-            ssize_t n = read(outPipe[0], chunk, sizeof(chunk));
-            if (n > 0) {
-                buffer.append(chunk, static_cast<size_t>(n));
-                continue;
-            }
-            if (n == 0) break; // EOF: processo fechou stdout
+        if (rc < 0) {
             if (errno == EINTR) continue;
+            aborted = true;
             break;
         }
         if (rc == 0) {
             waitedMs += stepMs;
             if (waitedMs >= deadlineMs) {
-                timedOut = true;
+                aborted = true;
                 break;
             }
+            continue;
         }
+        if (pfd.revents & (POLLIN | POLLHUP)) {
+            ssize_t n = read(outPipe[0], chunk, sizeof(chunk));
+            if (n > 0) {
+                buffer.append(chunk, static_cast<size_t>(n));
+                continue;
+            }
+            if (n < 0 && errno == EINTR) continue;
+            break; // EOF (processo fechou stdout) ou erro de leitura
+        }
+        break; // POLLERR/POLLNVAL: nada mais a ler desse pipe
     }
     close(outPipe[0]);
 
-    if (timedOut) {
-        kill(pid, SIGKILL);
+    if (aborted) {
+        kill(-pid, SIGKILL);
         waitpid(pid, nullptr, 0);
         return false;
     }

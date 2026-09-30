@@ -81,6 +81,17 @@ fi
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') kiosk iniciado" >> "$LOG_FILE"
 
+# Volume (controle remoto VOL+/VOL-/MUTE): o HDMI do RK3229 não tem
+# volume em hardware — install.sh cria um controle "Master" por software
+# (softvol, /etc/alsa/conf.d/99-tvbox-hdmi-softvol.conf). Esse controle
+# só passa a existir depois que o PCM padrão é aberto uma vez; abre por
+# 0,1s em silêncio e restaura o último volume salvo pelo app (ver
+# src/remote_control.cpp, `alsactl store` a cada ajuste). Tudo opcional.
+if [ -f /etc/alsa/conf.d/99-tvbox-hdmi-softvol.conf ]; then
+  timeout 3 aplay -q -D default -f S16_LE -r 48000 -c 2 -s 4800 /dev/zero 2>/dev/null || true
+  alsactl restore 2>/dev/null || true
+fi
+
 # --- Painel institucional (Chromium) nos outros 75% da tela ---
 # --ozone-platform=x11 é obrigatório: sem forçar, o Chromium (assim
 # como o mpv, ver known-issues.md item 5) prefere Wayland nativo sempre

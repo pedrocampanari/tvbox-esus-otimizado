@@ -32,6 +32,21 @@ constexpr const char *kYtdlFormatSelector =
     "bestvideo[vcodec^=avc1][height<=720]+bestaudio/"
     "best[vcodec^=avc1][height<=720]/best[height<=720]/best";
 
+// Cache local de vídeos (ver include/video_cache.h). Relativo ao cwd,
+// igual assets/ e config/ (exec.sh já entra na raiz do projeto). Fica
+// na flash (16GB), nunca em tmpfs — RAM é o recurso escasso aqui.
+constexpr const char *kVideoCacheDir = "cache/videos";
+
+// Não inicia um download novo se sobrar menos que isso livre no disco
+// do cache — o kiosk precisa continuar funcionando (logs, Chromium)
+// mesmo com a flash quase cheia.
+constexpr long long kVideoCacheMinFreeBytes = 512LL * 1024 * 1024;
+
+// Tempo máximo de um download (yt-dlp + merge do ffmpeg). Vídeos
+// institucionais de poucos minutos em 720p levam bem menos que isso
+// mesmo numa rede ruim; passou disso, desiste e tenta de novo depois.
+constexpr int kVideoDownloadTimeoutSeconds = 30 * 60;
+
 } // namespace kiosk
 
 #endif // TVBOX_VIDEO_CONFIG_H

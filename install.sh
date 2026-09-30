@@ -40,13 +40,19 @@ fi
 log "Atualizando índices do apt"
 $SUDO apt update
 
-log "Instalando dependências de runtime (X11, mpv, curl, python3, chromium)"
+# ffmpeg: o cache de vídeos (include/video_cache.h) baixa vídeo H.264 e
+# áudio separados via yt-dlp, que precisa do ffmpeg pra juntar os dois
+# num .mp4 (só cópia de stream, sem recodificar — qualidade intacta).
+# As libs pesadas (libavcodec etc.) já vêm com o mpv; o pacote em si é
+# pequeno.
+log "Instalando dependências de runtime (X11, mpv, ffmpeg, curl, python3, chromium)"
 $SUDO apt install -y \
   xserver-xorg \
   xinit \
   x11-xserver-utils \
   unclutter-xfixes \
   mpv \
+  ffmpeg \
   curl \
   python3 \
   python3-pip \
@@ -149,6 +155,54 @@ KEY_POWER 1 /usr/sbin/poweroff
 THD
 $SUDO systemctl enable --now triggerhappy
 
+# Áudio pelo HDMI com volume por software. Diagnóstico no dispositivo
+# real (2026-09-29): NENHUMA placa ALSA (analog/SPDIF/HDMI) expõe
+# controle de mixer — `amixer scontrols` vazio —, então VOL+/VOL-/MUTE
+# do controle remoto nunca tinham o que ajustar; e a placa padrão era a
+# analógica (card 0), não o HDMI da TV. Este arquivo:
+#   - `dmix`: vários processos tocando juntos no HDMI (Chromium +
+#     eventuais outros), que sozinho só aceita um stream;
+#   - `softvol`: cria o controle "Master" (0-100%) que o app ajusta;
+#   - `pcm.!default`/`ctl.!default` apontando pro HDMI.
+# Arquivo separado em /etc/alsa/conf.d em vez de editar /etc/asound.conf
+# (que pertence ao pacote armbian-bsp-cli e seria sobrescrito num
+# upgrade). Reversível: apagar o arquivo.
+log "Configurando áudio HDMI com volume por software (softvol + dmix)"
+$SUDO mkdir -p /etc/alsa/conf.d
+$SUDO tee /etc/alsa/conf.d/99-tvbox-hdmi-softvol.conf > /dev/null <<'ALSA'
+# TV Box e-SUS: saída padrão = HDMI, com volume por software ("Master").
+# Ver install.sh e docs/memory/known-issues.md item -8.
+pcm.tvbox_hdmi_dmix {
+    type dmix
+    ipc_key 3229
+    ipc_perm 0666
+    slave {
+        pcm "hw:HDMI,0"
+        rate 48000
+    }
+}
+pcm.tvbox_softvol {
+    type softvol
+    slave.pcm "tvbox_hdmi_dmix"
+    control {
+        name "Master"
+        card HDMI
+    }
+    min_dB -51.0
+    max_dB 0.0
+}
+pcm.!default {
+    type plug
+    slave.pcm "tvbox_softvol"
+}
+ctl.!default {
+    type hw
+    card HDMI
+}
+ALSA
+# Abre o PCM padrão uma vez pra o controle "Master" passar a existir.
+timeout 3 aplay -q -D default -f S16_LE -r 48000 -c 2 -s 4800 /dev/zero 2>/dev/null || true
+
 # WiFi onboard (chip SSV6051, driver ssv6051) é conhecidamente quebrado
 # nesta placa sob Armbian: escritas de registro via SDIO são confirmadas
 # pelo barramento mas nunca chegam no chip de verdade (bug documentado
@@ -209,6 +263,8 @@ fi
 echo -n "controle remoto (rc0): "
 if [ -e /sys/class/rc/rc0 ]; then echo "detectado"; else echo "NÃO detectado (ver docs/memory/known-issues.md)"; fi
 echo -n "triggerhappy:          "; systemctl is-active triggerhappy 2>/dev/null || echo "inativo"
+echo -n "ffmpeg:                "; command -v ffmpeg >/dev/null 2>&1 && echo "ok" || echo "NÃO encontrado (cache de vídeos não consegue juntar vídeo+áudio)"
+echo -n "volume (Master):       "; amixer get Master 2>/dev/null | grep -o '\[[0-9]*%\]' | head -1 || echo "controle não encontrado"
 echo -n "wifi onboard (ssv6051): "
 if lsmod 2>/dev/null | grep -q '^ssv6051'; then
   echo "carregado (blacklist nao aplicada ainda? reboot pendente)"

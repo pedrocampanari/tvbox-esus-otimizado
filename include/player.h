@@ -64,12 +64,25 @@ public:
     // `IsVideoActuallyPlaying()` — enquanto isso, quem chamou deve
     // desenhar uma animação de carregamento por cima (ver
     // include/ui.h::DrawLoadingSlide).
-    bool Play(const Campaign &campaign);
+    // `localFile`: caminho do cache local (include/video_cache.h); se
+    // vazio, faz streaming da URL da campanha via ytdl_hook do mpv.
+    // Toca UMA vez (sem loop) — ver HasExited().
+    bool Play(const Campaign &campaign, const std::string &localFile);
 
     // Esconde a janela de vídeo e mata o processo mpv, se houver.
     void Stop();
 
-    bool IsPlaying() const;
+    // Stop() + destrói a janela de vídeo e fecha a conexão X11. Chamar
+    // ANTES do CloseWindow() do Raylib: a janela de vídeo é filha da
+    // dele e morre junto; mexer nela depois gera BadWindow, que o Xlib
+    // trata abortando o processo (exit 1). Idempotente; o destrutor
+    // também chama.
+    void Shutdown();
+
+    // true uma única vez, quando o mpv iniciado pelo último Play() saiu
+    // sozinho — fim do vídeo (sucesso) ou erro ao abrir/resolver. Chamar
+    // todo frame enquanto o slide de vídeo estiver ativo.
+    bool HasExited();
 
     // Detecta playback real via o evento "playback-restart" que o mpv
     // manda sozinho (sem precisar perguntar nada) pelo seu socket IPC
