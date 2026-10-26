@@ -1,5 +1,18 @@
 # Handoff de sessão
 
+## Sessão de 2026-10-26 (parte 29) — monitor de resolução alta travava: resolução fixa em 720p
+
+Usuário: "quando conecto um monitor com resolução mais alta ele começa a
+travar". Causa e correção em [[known-issues]] item -14: `exec.sh` trava
+a saída em `DISPLAY_MODE=1280x720` via `xrandr` antes de subir app e
+painel. `bash -n` ok. No aparelho só li o `xrandr` (HDMI-1, 1366x768
+nativo, 720p@60 disponível). Com o ok do usuário: `exec.sh` copiado
+(md5 conferido), `sync` + reboot. Kiosk voltou em ~2 min já em 720p,
+com painel 960x720 e app 320x720 (detalhes no item -14). O aparelho
+está em `70b0593` com o `exec.sh` novo copiado e sem commit.
+
+---
+
 ## Sessão de 2026-10-26 (parte 28) — menu "Configuração da BTV" no HOME
 
 Implementado e testado no aparelho com o controle ([[known-issues]] item

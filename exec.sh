@@ -36,6 +36,11 @@ PANEL_URL="${PANEL_URL:-https://esus.treslagoas.ms.gov.br/painel}"
 # em 60% a cada boot") — o último volume ajustado no controle NÃO é
 # lembrado de propósito.
 BOOT_VOLUME_PERCENT="${BOOT_VOLUME_PERCENT:-60}"
+# Resolução fixa da saída de vídeo, qualquer que seja o monitor. Monitor
+# 4K/1440p fazia o RK3229 travar: o X não tem aceleração na Mali-400
+# (só GLES 2.0) e o Chromium/mpv passavam a desenhar 4x mais pixels. Em
+# 720p o próprio monitor amplia, de graça. Vazio = resolução nativa.
+DISPLAY_MODE="${DISPLAY_MODE:-1280x720}"
 # Watchdog de rede do painel: intervalo entre checagens (segundos).
 PANEL_NET_CHECK_SECONDS="${PANEL_NET_CHECK_SECONDS:-30}"
 
@@ -86,6 +91,21 @@ elif command -v unclutter >/dev/null 2>&1; then
 fi
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') kiosk iniciado" >> "$LOG_FILE"
+
+# Trava a resolução ANTES de subir o app e o painel: os dois leem o
+# tamanho da tela só ao iniciar (app: GetMonitorWidth; painel: xrandr
+# abaixo). Se o monitor não anunciar DISPLAY_MODE, fica na nativa.
+if [ -n "$DISPLAY_MODE" ] && command -v xrandr >/dev/null 2>&1; then
+  HDMI_OUT=$(xrandr --query 2>/dev/null | awk '/ connected/ { print $1; exit }')
+  if [ -z "$HDMI_OUT" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') AVISO: nenhuma saida conectada no xrandr — resolucao nao travada" >> "$LOG_FILE"
+  elif xrandr --output "$HDMI_OUT" --mode "$DISPLAY_MODE" --rate 60 2>/dev/null \
+      || xrandr --output "$HDMI_OUT" --mode "$DISPLAY_MODE" 2>/dev/null; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') resolucao travada em $DISPLAY_MODE ($HDMI_OUT)" >> "$LOG_FILE"
+  else
+    echo "$(date '+%Y-%m-%d %H:%M:%S') AVISO: $HDMI_OUT nao aceita $DISPLAY_MODE — mantendo a nativa" >> "$LOG_FILE"
+  fi
+fi
 
 # Volume (controle remoto VOL+/VOL-/MUTE): o HDMI do RK3229 não tem
 # volume em hardware — install.sh cria um controle "Master" por software

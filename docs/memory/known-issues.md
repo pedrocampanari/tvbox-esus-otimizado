@@ -1,5 +1,29 @@
 # Problemas e decisões em aberto conhecidas
 
+## -14. Travamento com monitor de resolução alta (1080p/4K) — CORRIGIDO em 2026-10-26 (resolução travada em 720p, boot real testado no RK3229)
+O X usa a resolução nativa que o monitor anuncia. O RK3229 não aguenta
+resoluções altas: a Mali-400 só tem GLES 2.0 (o glamor do X precisa de
+GLES 3.0), então o X e o Chromium do painel desenham na CPU, o mpv
+amplia o vídeo (≤720p) para uma janela bem maior, e cada imagem da tela
+cheia ocupa 4x mais RAM (4K ≈ 33 MB contra ≈ 8 MB em 1080p).
+`hwdec` real continua sem confirmação (item 5).
+
+Correção: `exec.sh` roda `xrandr --output <1ª saída conectada> --mode
+$DISPLAY_MODE --rate 60` (padrão `1280x720`) **antes** de subir o app e o
+painel, que leem o tamanho da tela só ao iniciar. O monitor amplia a
+imagem sozinho. Se o monitor não anunciar o modo, a tela fica na
+resolução nativa e o `kiosk.log` registra um AVISO. `DISPLAY_MODE=""` desliga a
+trava. Com o kiosk de pé, nada muda até a próxima subida do X: um
+monitor trocado com o aparelho ligado só pega 720p no reboot.
+
+No aparelho (2026-10-26): saída `HDMI-1`, monitor atual 1366x768 nativo,
+anuncia `1280x720 60.00`. Depois do reboot: `kiosk.log` com
+`resolucao travada em 1280x720 (HDMI-1)`, `xrandr` em `1280x720 60.00*`,
+painel 960x720+0+0 e app 320x720+960+0. Não testado: um monitor 4K de
+verdade e se o texto do painel fica legível em 720p. Por que não xorg.conf/`video=` do kernel: a seção Monitor
+do modesetting depende do nome da saída, e o `xrandr` fica no mesmo
+lugar que já calcula os 75% do painel.
+
 ## -13. Adequação ao manual da BTV11 (`docs/files/Manual-eSUSTV_BTV11_Pré-Validação.pdf`) — CONTROLE REMOTO e MENU HOME RESOLVIDOS em 2026-10-26 (testados no RK3229); Wi-Fi e boot sem rede sem teste no aparelho
 O manual é de outro aparelho (BTV B11/Amlogic, Firefox, menu Python/
 Tkinter) e é tratado como **especificação de comportamento**, não de

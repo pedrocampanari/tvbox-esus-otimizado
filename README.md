@@ -113,6 +113,11 @@ num tty que não seja o tty1) as variáveis continuam funcionando:
 PANEL_ENABLED=0 startx
 ```
 
+**Resolução fixa**: o `exec.sh` trava a saída HDMI em 1280x720
+(`DISPLAY_MODE` no topo do script; vazio = nativa do monitor). Em
+resolução alta (1080p/4K) o RK3229 trava, ver
+`docs/memory/known-issues.md` item -14.
+
 Por que Chromium e não WPE WebKit/Cog (mais leve): o pacote `cog` do
 Debian só tem renderização DRM/Wayland/headless, sem X11 — rodar ele
 exigiria um compositor Wayland por baixo, reabrindo o problema de
