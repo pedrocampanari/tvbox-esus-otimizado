@@ -64,6 +64,8 @@ $SUDO apt install -y \
   triggerhappy \
   alsa-utils \
   wpasupplicant \
+  iw \
+  netplan.io \
   isc-dhcp-client
 
 if [ "$WITH_BUILD_DEPS" = true ]; then

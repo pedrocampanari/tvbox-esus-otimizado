@@ -207,6 +207,31 @@ diretamente nem `glfw3native.h` — só os dois lados isolados (que
 precisam de X11/GLFW nativo) não podem se misturar com o lado que
 precisa de `raylib.h`.
 
+## Menu "Configuração da BTV" (2026-10-26)
+`include/setup_menu.h`/`src/setup_menu.cpp` (estado + `btv.conf`),
+`DrawSetupMenu` em `src/ui.cpp` (desenho) e `net-ctl.py` (rede). Mesma
+divisão do resto: o app só desenha e decide; o que mexe no sistema é
+processo pontual via `RunCaptureStdout`, numa thread de trabalho (um job
+por vez; scan/teste pedidos durante o status de 5 em 5 s ficam em
+`pendingJob_` — antes se perdiam e a tela travava em "Testando").
+- **Abertura**: sem `btv.conf` → abre no início; com ele, job
+  `wait-online 15` no boot e abre se falhar; HOME a qualquer momento.
+- **Tela cheia**: ao abrir, `player.Stop()` + `SetWindowSize(monitor)` +
+  `SetWindowPosition(0,0)` + `SetWindowFocused()` (sem gerenciador de
+  janelas o GLFW faz `XRaiseWindow` + `XSetInputFocus`: fica por cima do
+  Chromium e recebe o teclado). Ao fechar, volta aos 25% e recomeça o
+  slide. Aberto, o loop desenha só o menu (`continue`): volume/1/2/3 do
+  controle ficam para fora; o POWER segue no triggerhappy.
+- **Rede = netplan + systemd-networkd** (o que o Armbian já usa; sem
+  NetworkManager: zero daemon/RAM extra e o cabo não troca de dono).
+  `net-ctl.py` nunca toca no netplan do cabo; o Wi-Fi vai para
+  `/etc/netplan/90-tvbox-wifi.yaml`, gerado a cada `wifi-connect` a
+  partir de `/etc/tvbox/wifi-networks.json` (todas as redes salvas, 0600,
+  fsync). "Rede" = rota padrão + IPv4 (o manual separa "sem rede" de
+  "servidor fora": HTTP do teste é só informativo).
+- **Teclado**: `SetExitKey(KEY_NULL)` (o ESC do Raylib fecharia o app);
+  `GetCharPressed` é drenado todo frame, mesmo com o menu fechado.
+
 ## Janela fixa 25% x 100%
 No `main()`, antes do primeiro frame: pega `GetMonitorWidth/Height` do
 monitor primário, calcula `w = monitor_w * 0.25`, `h = monitor_h`,

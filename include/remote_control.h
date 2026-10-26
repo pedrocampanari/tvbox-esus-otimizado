@@ -29,12 +29,20 @@ enum class RemoteButton {
     kKey1,
     kKey2,
     kKey3,
+    // Navegacao do menu "Configuracao da BTV" (include/setup_menu.h).
+    kUp,
+    kDown,
+    kLeft,
+    kRight,
+    kOk,
+    kBack,
 };
 
 // Resultado de um Poll(), seguindo a secao 7 do manual da BTV11
 // (docs/files/). VOL+/VOL- viram `tap` no toque e na repeticao (botao
 // segurado = volume andando); MUTE/HOME/1/2 viram `tap` so na descida
-// (segurar nao repete a acao). 3 e POWER sao "botoes de segurar": a acao
+// (segurar nao repete a acao). Setas repetem como o volume; OK/VOLTAR
+// so na descida. 3 e POWER sao "botoes de segurar": a acao
 // depende de quanto tempo ficaram pressionados, entao aparecem em
 // `holding` enquanto estao apertados e em `released` na soltura.
 struct RemoteInput {

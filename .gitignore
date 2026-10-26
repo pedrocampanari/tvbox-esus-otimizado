@@ -28,6 +28,7 @@ kiosk.log
 panel.log
 .chromium-kiosk-profile/
 .panel-reset-request
+btv.conf
 
 # Cache local dos vídeos baixados (include/video_cache.h)
 /cache/

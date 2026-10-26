@@ -111,6 +111,16 @@ sempre**, porque ela não tem uma unidade associada.
 - Mídia (vídeo/imagem) sempre `object-fit: contain` — nunca cortar,
   sempre "letterbox" com o fundo `#06121f`.
 
+## Menu "Configuração da BTV" (não existe no site, vem do manual da BTV11)
+Tela cheia, mesma paleta e fonte do kiosk: header azul
+(`kColorHeaderBackground`, "CONFIGURAÇÃO DA BTV" + subtítulo da tela),
+fundo `kColorAppBackground`, linhas em cartões `kColorMediaBackground`
+(selecionada = azul do header com borda branca), títulos de seção em
+`kColorTextAccent`, rodapé vermelho (`kColorFooterBackground`) com as
+dicas de navegação. Tamanhos pela altura da tela (lido de longe). Marcador
+de escolha desenhado (a fonte não tem ●/○); `·` e `•` (senha) foram
+adicionados ao conjunto de glifos.
+
 ## Diferença deliberada de layout (requisito do projeto)
 A versão web ocupa `100vw x 100vh`. Nosso app deve abrir fixo em
 **25% da largura x 100% da altura** do monitor, mantendo a mesma

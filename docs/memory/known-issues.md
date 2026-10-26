@@ -1,6 +1,6 @@
 # Problemas e decisões em aberto conhecidas
 
-## -13. Adequação ao manual da BTV11 (`docs/files/Manual-eSUSTV_BTV11_Pré-Validação.pdf`) — CONTROLE REMOTO RESOLVIDO em 2026-10-26 (testado no RK3229 com o controle físico); menu HOME pendente
+## -13. Adequação ao manual da BTV11 (`docs/files/Manual-eSUSTV_BTV11_Pré-Validação.pdf`) — CONTROLE REMOTO e MENU HOME RESOLVIDOS em 2026-10-26 (testados no RK3229); Wi-Fi e boot sem rede sem teste no aparelho
 O manual é de outro aparelho (BTV B11/Amlogic, Firefox, menu Python/
 Tkinter) e é tratado como **especificação de comportamento**, não de
 implementação. Em 2026-10-26 o PDF já está completo (22 págs.).
@@ -8,7 +8,9 @@ implementação. Em 2026-10-26 o PDF já está completo (22 págs.).
 ### Controle remoto = seção 7 do manual (feito e confirmado no aparelho)
 | Botão | Scancode (necx) | Onde é tratado |
 |---|---|---|
-| HOME | `0x50518` | app: só aviso no rodapé (menu não existe) |
+| HOME | `0x50518` | app: abre o menu "Configuração da BTV" |
+| CIMA/BAIXO/ESQ/DIR | `0x50516`/`0x5051a`/`0x50551`/`0x50550` | menu (ESQ/DIR sem uso) |
+| OK / VOLTAR | `0x50513` / `0x50519` | menu (`KEY_OK`/`KEY_BACK`) |
 | 1 | `0x5054e` | app → `panel-ctl.sh kiosk`: fecha Chromium/Firefox principal fora do `--user-data-dir` do kiosk (filhos `--type=` saem junto) |
 | 2 | `0x5050d` | app sai (`g_running=false`), exec.sh sobe em 2 s; painel intacto |
 | 3 segurado 10 s | `0x5050c` | app → `panel-ctl.sh reset` aos 10 s ainda segurado, uma vez por segurada |
@@ -43,13 +45,33 @@ Feito antes (2026-10-23, agora também no aparelho): volume 60% a cada
 boot (confirmado após reboot), watchdog de rede do painel no exec.sh
 (reload quando o servidor volta), MUTE sem `alsactl store`.
 
-**Ainda falta**: menu "Configuração da BTV" (rede/UBS/"Testar conexão e
-entrar", abre no primeiro uso, sem rede ou no HOME) — fazer no próprio
-app Raylib, não em Python; boot esperando a rede ~15 s; conteúdo do
-servidor por UBS (`/display/{slug}`) no lugar da lista fixa (item 1);
-NetworkManager ou `wpa_supplicant` com várias redes (item -7). Confirmar
-na tela que o reset do 3 de fato desfaz o pareamento (o perfil foi
-apagado; falta ver o e-SUS pedindo pareamento).
+### Menu "Configuração da BTV" (seções 3-6, feito em 2026-10-26)
+No app Raylib (não Python/Tkinter), tela cheia; desenho em
+[[architecture]] > "Menu". Decisões do usuário: tela cheia (a coluna tem
+só 341 px nesta TV 1366x768), Wi-Fi pelo **netplan** (não
+NetworkManager), UBS **só gravada** (`ubs_slug` no `btv.conf`).
+
+Testado no aparelho com o controle: primeiro uso abre sozinho e o
+VOLTAR recusa; cabo + "sem UBS" + "Testar conexão e entrar" grava
+`btv.conf` e volta com "BTV CONECTADA"; HOME reabre; slug digitado no
+teclado USB foi gravado; VOLTAR fecha sem alterar. Bug achado no teste e
+corrigido: "Testar" pedido durante a consulta de status de 5 em 5 s se
+perdia (tela presa em "Testando") — agora fica em fila.
+
+**Sem teste no aparelho**:
+- **Wi-Fi** (scan, rede nova com senha, rede salva sem senha): o box
+  não tem interface Wi-Fi (sem dongle; onboard quebrado, item -7).
+  `net-ctl.py scan` sem interface responde certo ("conecte o dongle").
+  Ao testar: conferir o YAML gerado (`netplan generate` sem erro) e que
+  o `netplan apply` não derruba o cabo.
+- **Boot sem rede** (menu abrindo ~15 s depois): o usuário preferiu não
+  testar agora (exige tirar o cabo e reiniciar).
+
+**Ainda falta**: conteúdo do servidor por UBS (`/display/{slug}`) no
+lugar da lista fixa (item 1 — o slug já fica gravado); lista de UBS para
+escolher sem teclado (hoje é slug digitado). Confirmar na tela que o
+reset do 3 de fato desfaz o pareamento (o perfil foi apagado; falta ver
+o e-SUS pedindo pareamento).
 
 ## -12. Arquivos zerados depois de tirar da tomada (`commit=120` do Armbian) — PARCIALMENTE MITIGADO em 2026-09-30; decisão em aberto
 Visto no dispositivo: depois de um religamento às 10:50, arquivos

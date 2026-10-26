@@ -1,6 +1,9 @@
 #ifndef TVBOX_UI_H
 #define TVBOX_UI_H
 
+#include <string>
+#include <vector>
+
 #include "campaign.h"
 #include "raylib.h"
 
@@ -58,6 +61,38 @@ void DrawVolumeOsd(Rectangle area, int percent, bool muted, Color background, Co
 // uma barra fina no pe da area; negativo = sem barra.
 void DrawNoticeOsd(Rectangle area, const char *title, const char *subtitle, float progress,
                    Color background, Color foreground);
+
+// Uma linha do menu "Configuracao da BTV" (include/setup_menu.h).
+// kHeading = titulo de secao (nao selecionavel); kOption = escolha com
+// marcador redondo (`checked`); kButton = acao.
+struct MenuRowView {
+    enum class Kind { kHeading, kOption, kButton };
+    Kind kind = Kind::kOption;
+    std::string label;
+    std::string detail;
+    bool selected = false;
+    bool checked = false;
+};
+
+// Tudo que o menu precisa desenhar num frame — montado por
+// SetupMenu::View(), sem estado de desenho guardado aqui.
+struct SetupMenuView {
+    std::string subtitle;
+    std::vector<MenuRowView> rows;
+    std::string message;
+    bool messageIsError = false;
+    std::string hint;
+    bool busy = false;
+    // Campo de texto (teclado USB): substitui as linhas quando ativo.
+    bool textEntry = false;
+    std::string textLabel;
+    std::string textValue;
+};
+
+// Menu em tela cheia, no visual do kiosk (header azul, rodape vermelho
+// com as dicas de navegacao). Rola as linhas pra manter a selecionada
+// visivel. `elapsedSeconds` anima o spinner de `busy`.
+void DrawSetupMenu(Rectangle area, const SetupMenuView &view, float elapsedSeconds);
 
 } // namespace kiosk
 

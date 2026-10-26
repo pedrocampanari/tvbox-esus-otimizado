@@ -28,6 +28,7 @@ std::vector<int> BuildPortugueseCodepoints() {
         0xD5, 0xDA, 0xDC, 0xE0, 0xE1, 0xE2, 0xE3, 0xE7, 0xE8, 0xE9, 0xEA,
         0xED, 0xF3, 0xF4, 0xF5, 0xFA, 0xFC,
         0xAA, 0xBA, 0xB0, // ª º ° (ex.: "1º", "38°C")
+        0xB7, 0x2022,     // · • (dicas e senha mascarada do menu de configuração)
     };
     for (int c : extra) cps.push_back(c);
     return cps;
@@ -311,6 +312,127 @@ void DrawNoticeOsd(Rectangle area, const char *title, const char *subtitle, floa
         DrawRectangleRec(bar, Fade(foreground, 0.3f));
         bar.width *= std::clamp(progress, 0.0f, 1.0f);
         DrawRectangleRec(bar, foreground);
+    }
+}
+
+void DrawSetupMenu(Rectangle area, const SetupMenuView &view, float elapsedSeconds) {
+    DrawRectangleRec(area, kColorAppBackground);
+
+    // Tela cheia, lida de longe: tamanhos pela ALTURA (a largura varia
+    // muito entre TVs 16:9 e esta 1366x768).
+    float unit = area.height / 100.0f;
+    float barHeight = std::clamp(unit * 11.0f, 50.0f, 120.0f);
+    Rectangle header = {area.x, area.y, area.width, barHeight};
+    Rectangle footer = {area.x, area.y + area.height - barHeight * 0.7f, area.width,
+                        barHeight * 0.7f};
+    float centerX = area.x + area.width / 2.0f;
+
+    DrawRectangleRec(header, kColorHeaderBackground);
+    float titleSize = std::clamp(unit * 4.6f, 22.0f, 52.0f);
+    float subSize = std::clamp(unit * 2.6f, 13.0f, 30.0f);
+    float hy = header.y + (header.height - titleSize - subSize * 1.2f) / 2.0f;
+    DrawCenteredText(BoldFont(), "CONFIGURAÇÃO DA BTV", titleSize, kColorChromeText, centerX, hy);
+    DrawCenteredText(RegularFont(), view.subtitle.c_str(), subSize,
+                     Fade(kColorChromeText, 0.85f), centerX, hy + titleSize * 1.15f);
+
+    DrawRectangleRec(footer, kColorFooterBackground);
+    float hintSize = std::clamp(unit * 2.4f, 12.0f, 28.0f);
+    DrawCenteredText(RegularFont(), view.hint.c_str(), hintSize, kColorChromeText, centerX,
+                     footer.y + (footer.height - hintSize) / 2.0f);
+
+    float contentW = std::min(area.width - 2.0f * unit * 4.0f, unit * 120.0f);
+    float left = centerX - contentW / 2.0f;
+    float top = header.y + header.height + unit * 3.0f;
+    float messageSize = std::clamp(unit * 2.6f, 13.0f, 30.0f);
+    float bottom = footer.y - unit * 2.0f - (view.message.empty() ? 0.0f : messageSize * 2.0f);
+
+    float labelSize = std::clamp(unit * 3.2f, 15.0f, 38.0f);
+    float detailSize = std::clamp(unit * 2.4f, 12.0f, 28.0f);
+
+    if (view.textEntry) {
+        float y = top + unit * 4.0f;
+        DrawCenteredText(BoldFont(), view.textLabel.c_str(), labelSize, kColorTextFg, centerX, y);
+        y += labelSize * 1.8f;
+        Rectangle field = {left, y, contentW, labelSize * 2.2f};
+        DrawRectangleRounded(field, 0.2f, 8, kColorMediaBackground);
+        DrawRectangleRoundedLinesEx(field, 0.2f, 8, 2.0f, kColorTextAccent);
+        // Cursor piscando no fim do texto.
+        std::string shown = view.textValue;
+        if (std::fmod(elapsedSeconds, 1.0f) < 0.6f) shown += "|";
+        DrawTextEx(RegularFont(), shown.c_str(),
+                   {field.x + labelSize * 0.6f, field.y + (field.height - labelSize) / 2.0f},
+                   labelSize, 0.0f, kColorTextFg);
+    } else {
+        float rowH = labelSize + detailSize * 1.5f + unit * 1.6f;
+        float headingH = labelSize * 1.6f;
+        int selectedIndex = 0;
+        for (size_t i = 0; i < view.rows.size(); ++i) {
+            if (view.rows[i].selected) selectedIndex = static_cast<int>(i);
+        }
+        // Rolagem: a partir de qual linha desenhar pra a selecionada caber.
+        auto heightOf = [&](const MenuRowView &r) {
+            return r.kind == MenuRowView::Kind::kHeading ? headingH : rowH;
+        };
+        size_t first = 0;
+        for (;;) {
+            float used = 0.0f;
+            for (int i = static_cast<int>(first); i <= selectedIndex && i < static_cast<int>(view.rows.size()); ++i) {
+                used += heightOf(view.rows[i]);
+            }
+            if (used <= bottom - top || static_cast<int>(first) >= selectedIndex) break;
+            ++first;
+        }
+
+        float y = top;
+        for (size_t i = first; i < view.rows.size(); ++i) {
+            const MenuRowView &row = view.rows[i];
+            float h = heightOf(row);
+            if (y + h > bottom) break;
+            if (row.kind == MenuRowView::Kind::kHeading) {
+                DrawTextEx(BoldFont(), row.label.c_str(), {left, y + headingH - labelSize * 1.1f},
+                           labelSize * 0.8f, 0.0f, kColorTextAccent);
+                y += h;
+                continue;
+            }
+            Rectangle box = {left, y, contentW, h - unit * 1.0f};
+            if (row.selected) {
+                DrawRectangleRounded(box, 0.15f, 8, kColorHeaderBackground);
+                DrawRectangleRoundedLinesEx(box, 0.15f, 8, 3.0f, kColorChromeText);
+            } else {
+                DrawRectangleRounded(box, 0.15f, 8, kColorMediaBackground);
+            }
+            float textX = box.x + labelSize * 0.7f;
+            if (row.kind == MenuRowView::Kind::kOption) {
+                // Marcador de escolha desenhado (a fonte não tem os glifos ●/○).
+                float r = labelSize * 0.38f;
+                Vector2 c = {box.x + labelSize * 0.9f, box.y + box.height / 2.0f};
+                DrawRing(c, r * 0.78f, r, 0.0f, 360.0f, 24, kColorChromeText);
+                if (row.checked) DrawCircleV(c, r * 0.5f, kColorChromeText);
+                textX = c.x + labelSize * 0.9f;
+            }
+            float ty = box.y + (box.height - labelSize - (row.detail.empty() ? 0 : detailSize * 1.25f)) / 2.0f;
+            DrawTextEx(BoldFont(), row.label.c_str(), {textX, ty}, labelSize, 0.0f, kColorTextFg);
+            if (!row.detail.empty()) {
+                DrawTextEx(RegularFont(), row.detail.c_str(), {textX, ty + labelSize * 1.2f}, detailSize,
+                           0.0f, Fade(kColorTextFg, 0.75f));
+            }
+            y += h;
+        }
+    }
+
+    if (!view.message.empty()) {
+        float my = footer.y - unit * 1.5f - messageSize * 1.4f;
+        Color color = view.messageIsError ? Color{0xff, 0x8a, 0x80, 0xff} : kColorTextAccent;
+        float textW = MeasureTextEx(RegularFont(), view.message.c_str(), messageSize, 0.0f).x;
+        float spinnerR = view.busy ? messageSize * 0.5f : 0.0f;
+        float startX = centerX - (textW + spinnerR * 3.0f) / 2.0f;
+        if (view.busy) {
+            float a = std::fmod(elapsedSeconds * 220.0f, 360.0f);
+            DrawRing({startX + spinnerR, my + messageSize / 2.0f}, spinnerR * 0.6f, spinnerR, a,
+                     a + 270.0f, 24, kColorTextAccent);
+        }
+        DrawTextEx(RegularFont(), view.message.c_str(), {startX + spinnerR * 3.0f, my}, messageSize,
+                   0.0f, color);
     }
 }
 

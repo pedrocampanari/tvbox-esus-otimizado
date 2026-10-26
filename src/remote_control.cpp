@@ -156,6 +156,24 @@ RemoteInput RemoteControl::Poll(double nowSeconds) {
             case KEY_2:
                 if (ev.value == 1) result.tap = RemoteButton::kKey2;
                 continue;
+            case KEY_UP:
+                if (ev.value != 0) result.tap = RemoteButton::kUp;
+                continue;
+            case KEY_DOWN:
+                if (ev.value != 0) result.tap = RemoteButton::kDown;
+                continue;
+            case KEY_LEFT:
+                if (ev.value != 0) result.tap = RemoteButton::kLeft;
+                continue;
+            case KEY_RIGHT:
+                if (ev.value != 0) result.tap = RemoteButton::kRight;
+                continue;
+            case KEY_OK:
+                if (ev.value == 1) result.tap = RemoteButton::kOk;
+                continue;
+            case KEY_BACK:
+                if (ev.value == 1) result.tap = RemoteButton::kBack;
+                continue;
             case KEY_3:     holdKey = RemoteButton::kKey3;  break;
             case KEY_POWER: holdKey = RemoteButton::kPower; break;
             default: continue;

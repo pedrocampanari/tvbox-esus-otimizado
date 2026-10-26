@@ -1,5 +1,26 @@
 # Handoff de sessão
 
+## Sessão de 2026-10-26 (parte 28) — menu "Configuração da BTV" no HOME
+
+Implementado e testado no aparelho com o controle ([[known-issues]] item
+-13, [[architecture]] > "Menu"): `setup_menu.{h,cpp}`, `DrawSetupMenu`,
+`net-ctl.py` (netplan/networkd), `btv.conf` (marcador de primeiro uso,
+fora do git), keymap de CIMA/BAIXO/ESQ/DIR/OK/VOLTAR, `SetExitKey(KEY_NULL)`.
+`install.sh` ganhou `iw` e `netplan.io` na lista de pacotes.
+
+Captura dos scancodes: a rodada "aperte todos em sequência" saiu
+embaralhada (2 HOME a mais, BAIXO não chegou); botão a botão funcionou.
+Um `ir-keytable -t` com `nohup` morreu sozinho logo depois de começar —
+`setsid nohup ... & disown` resolveu.
+
+O box ficou com `btv.conf` = cabo, sem UBS (o slug `ubs-teste` do teste
+foi limpo). Wi-Fi e boot sem rede **não testados** no aparelho.
+
+Estado: menu commitado; o aparelho roda esta versão e o git dele foi
+alinhado ao commit (reset --hard depois de conferir os arquivos).
+
+---
+
 ## Sessão de 2026-10-26 (parte 27) — SSH no IP novo, controle remoto igual ao manual (testado no aparelho)
 
 **Acesso**: o box agora é `root@192.168.101.213` (cabo, `end0`, DHCP);

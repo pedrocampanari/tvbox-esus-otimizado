@@ -26,8 +26,12 @@ Nesta ordem:
 ```
 apps/tvbox_esus_app.cpp   # entrypoint único (main + loop do kiosk)
 include/                  # headers dos módulos
-src/                      # implementação dos módulos (scraper, player, video_cache, ui, remote_control, procexec, campaign_store)
+src/                      # implementação dos módulos (scraper, player, video_cache, ui, remote_control, setup_menu, procexec, campaign_store)
 config/campaigns.conf     # lista FIXA de vídeos/campanhas (fonte de conteúdo padrão, ver known-issues)
+config/rc-rk322x-tvbox.toml # keymap do controle remoto IR (install.sh instala)
+panel-ctl.sh              # reload/reset/kiosk do Chromium do painel
+net-ctl.py                # rede do menu de configuração (netplan/networkd)
+btv.conf                  # configuração gravada pelo menu (gerado, fora do git)
 assets/fonts/             # Liberation Sans (tipografia formal, SIL OFL)
 cache/videos/             # vídeos baixados em runtime + manifest.tsv (gerado, fora do git)
 CMakeLists.txt            # build canônico (resolve Raylib via FetchContent)
@@ -129,12 +133,28 @@ com o controle físico no RK3229 em 2026-10-26.
 | 2 | recarrega só o Display (25%), painel intacto |
 | 3 segurado 10 s | **reseta o vínculo do PEC**: apaga cookies/perfil do e-SUS e reabre (exige novo pareamento) |
 | POWER segurado 5 s | reinicia o aparelho (toque curto não faz nada) |
-| HOME | só mostra aviso: o menu "Configuração da BTV" ainda não existe |
+| HOME | abre o menu "Configuração da BTV" (ver abaixo) |
+| CIMA / BAIXO / OK / VOLTAR | navegação do menu (ESQUERDA/DIREITA mapeadas, sem uso) |
 
 O rodapé mostra a contagem enquanto 3 ou POWER estão segurados (soltar
 antes cancela). Na mão, via SSH: `./panel-ctl.sh reload|reset|kiosk`. Se o
 servidor do painel cair, o `exec.sh` reabre o painel sozinho quando ele
 voltar. Estado e pendências: `docs/memory/known-issues.md` item -13.
+
+### Menu "Configuração da BTV"
+
+Seções 3-6 do manual. Abre sozinho no **primeiro uso** (sem `btv.conf`)
+e quando a BTV configurada **não acha rede em 15 s** no boot; a qualquer
+momento pelo **HOME**. Ocupa a tela toda (o vídeo para; ao sair, volta
+aos 25%). Opções: rede cabeada ou Wi-Fi (redes salvas sem redigitar a
+senha), unidade de saúde por slug ou "Entrar sem vincular a uma UBS", e
+"Testar conexão e entrar", que valida a rede, grava `btv.conf` e libera
+o kiosk. Navega pelo controle ou pelo teclado USB (setas/ENTER/ESC);
+senha nova e slug só pelo teclado USB (sem teclado virtual, como no
+manual). O Wi-Fi é gravado no netplan (`/etc/netplan/90-tvbox-wifi.yaml`,
+redes salvas em `/etc/tvbox/wifi-networks.json`). O slug só fica
+gravado: o conteúdo ainda vem da lista fixa. Na mão, via SSH:
+`./net-ctl.py status|scan|test URL`.
 
 Logs ficam na raiz do projeto: `kiosk.log` (app de vídeo, inclui as
 linhas `VideoCache:` de download/exibição) e `panel.log` (Chromium).

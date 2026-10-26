@@ -69,6 +69,19 @@ constexpr float kNoticeOsdDurationSeconds = 5.0f;
 // panel-ctl.sh. Relativo ao cwd (raiz do projeto, garantido pelo exec.sh).
 constexpr const char *kPanelCtlScript = "./panel-ctl.sh";
 
+// Menu "Configuracao da BTV" (include/setup_menu.h, secoes 3-6 do manual
+// da BTV11). Helper de rede (netplan/networkd) e arquivo com o estado da
+// configuracao (marcador de primeiro uso, rede escolhida, slug da UBS),
+// ambos relativos ao cwd como o panel-ctl.sh. O arquivo fica fora do git.
+constexpr const char *kNetCtlScript = "./net-ctl.py";
+constexpr const char *kBtvConfigPath = "btv.conf";
+// Boot ja configurado e sem rede: espera isto e entao abre o menu.
+constexpr int kBootNetworkWaitSeconds = 15;
+// Alvo do "Testar conexao e entrar" — manter igual ao PANEL_URL do exec.sh.
+// So informativo: servidor fora do ar com a rede ok ainda entra (o
+// watchdog do exec.sh reabre o painel quando ele voltar).
+constexpr const char *kNetworkTestUrl = "https://esus.treslagoas.ms.gov.br/painel";
+
 // Fonte de conteúdo: por autorização do dono do sistema (2026-09-26),
 // v1 usa uma lista FIXA de campanhas/vídeos (config/campaigns.conf),
 // carregada uma única vez na inicialização — sem ficar buscando a URL

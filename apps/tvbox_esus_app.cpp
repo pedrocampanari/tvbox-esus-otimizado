@@ -24,6 +24,7 @@
 #include "procexec.h"
 #include "remote_control.h"
 #include "scraper.h"
+#include "setup_menu.h"
 #include "ui.h"
 #include "video_cache.h"
 
@@ -175,6 +176,9 @@ int main() {
     SetConfigFlags(FLAG_WINDOW_UNDECORATED);
     SetTraceLogLevel(LOG_WARNING);
     InitWindow(100, 100, "TV Box e-SUS Otimizado");
+    // ESC do teclado USB e do menu de configuracao (voltar), nao "fechar
+    // o app" — o padrao do Raylib derrubaria o kiosk.
+    SetExitKey(KEY_NULL);
 
     int monitor = GetCurrentMonitor();
     int monitorW = GetMonitorWidth(monitor);
@@ -234,6 +238,17 @@ int main() {
     NoticeText notice;
     bool panelResetFired = false;
 
+    // Menu "Configuracao da BTV" (include/setup_menu.h): primeiro uso,
+    // boot sem rede e HOME. Aberto, o app ocupa a tela toda por cima do
+    // painel e o slide atual para; ao fechar, volta aos 25% e recomeca.
+    SetupMenu setupMenu(kBtvConfigPath, kNetCtlScript, kNetworkTestUrl);
+    if (!setupMenu.Configured()) {
+        setupMenu.Open("Primeira configuração: escolha a rede e a unidade");
+    } else {
+        setupMenu.StartBootNetworkCheck(kBootNetworkWaitSeconds);
+    }
+    bool menuWasOpen = false;
+
     size_t currentIndex = 0;
     bool startSlide = true; // força (re)início mesmo se o id não mudou (lista de 1 item)
     double slideStartTime = GetTime();
@@ -248,6 +263,44 @@ int main() {
     unsigned snapshotGeneration = ~0u;
 
     while (g_running.load() && !WindowShouldClose()) {
+        RemoteInput remoteInput = remote.Poll(GetTime());
+        if (!setupMenu.IsOpen() && remoteInput.tap == RemoteButton::kHome) setupMenu.Open("");
+        setupMenu.Update(setupMenu.IsOpen() ? remoteInput.tap : RemoteButton::kNone);
+
+        bool menuOpen = setupMenu.IsOpen();
+        if (menuOpen != menuWasOpen) {
+            menuWasOpen = menuOpen;
+            if (menuOpen) {
+                if (playerReady) player.Stop();
+                SetWindowSize(monitorW, monitorH);
+                SetWindowPosition(0, 0);
+                // Sem gerenciador de janelas: XRaiseWindow + foco do
+                // teclado (o painel do Chromium fica embaixo).
+                SetWindowFocused();
+            } else {
+                SetWindowSize(windowW, windowH);
+                SetWindowPosition(windowX, 0);
+                startSlide = true;
+                std::string title;
+                std::string subtitle;
+                if (setupMenu.TakeClosedNotice(title, subtitle)) {
+                    notice = {title, subtitle, -1.0f};
+                    noticeOsdUntil = GetTime() + kNoticeOsdDurationSeconds;
+                }
+            }
+        }
+        if (menuOpen) {
+            // Volume, 1/2/3 do controle ficam para fora do menu; o POWER
+            // continua reiniciando (triggerhappy, fora deste processo).
+            SetTargetFPS(30);
+            BeginDrawing();
+            DrawSetupMenu({0, 0, static_cast<float>(GetScreenWidth()),
+                           static_cast<float>(GetScreenHeight())},
+                          setupMenu.View(), static_cast<float>(GetTime()));
+            EndDrawing();
+            continue;
+        }
+
         if (g_campaignsGeneration.load() != snapshotGeneration) {
             {
                 std::lock_guard<std::mutex> lock(g_campaignsMutex);
@@ -332,7 +385,6 @@ int main() {
             startSlide = true;
         }
 
-        RemoteInput remoteInput = remote.Poll(GetTime());
         bool volumeAction = remoteInput.tap == RemoteButton::kVolumeUp ||
                             remoteInput.tap == RemoteButton::kVolumeDown;
         bool muteAction = remoteInput.tap == RemoteButton::kMute;
@@ -361,13 +413,6 @@ int main() {
         } else if (panelResetFired) {
             panelResetFired = false;
             notice = {"PAINEL RESETADO", "Reabrindo o e-SUS sem cookies", -1.0f};
-            noticeOsdUntil = GetTime() + kNoticeOsdDurationSeconds;
-        }
-        if (remoteInput.tap == RemoteButton::kHome) {
-            // Menu "Configuração da BTV" ainda não existe (ver
-            // docs/memory/known-issues.md item -13).
-            TraceLog(LOG_WARNING, "Controle: HOME recebido (menu de configuracao ainda nao implementado)");
-            notice = {"CONFIGURAÇÃO DA BTV", "Menu ainda não disponível nesta versão", -1.0f};
             noticeOsdUntil = GetTime() + kNoticeOsdDurationSeconds;
         }
 
