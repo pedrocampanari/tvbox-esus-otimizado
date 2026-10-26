@@ -8,8 +8,11 @@ a saída em `DISPLAY_MODE=1280x720` via `xrandr` antes de subir app e
 painel. `bash -n` ok. No aparelho só li o `xrandr` (HDMI-1, 1366x768
 nativo, 720p@60 disponível). Com o ok do usuário: `exec.sh` copiado
 (md5 conferido), `sync` + reboot. Kiosk voltou em ~2 min já em 720p,
-com painel 960x720 e app 320x720 (detalhes no item -14). O aparelho
-está em `70b0593` com o `exec.sh` novo copiado e sem commit.
+com painel 960x720 e app 320x720 (detalhes no item -14).
+
+Estado: commit `09d7e05` no GitHub; o git do aparelho foi alinhado
+(`git checkout exec.sh && git pull --ff-only`, sem recompilar nem
+reiniciar: o `exec.sh` era idêntico).
 
 ---
 
