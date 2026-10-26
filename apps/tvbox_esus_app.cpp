@@ -6,9 +6,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -99,6 +101,66 @@ constexpr double kVideoFailureHoldSeconds = 3.0;
 
 void HandleTerminationSignal(int) { g_running.store(false); }
 
+// Roda o panel-ctl.sh numa thread solta: ele espera o Chromium sair (até
+// ~10s), e o loop de desenho não pode congelar esse tempo todo.
+void RunPanelCtlDetached(const char *action) {
+    std::thread([action] {
+        std::string ignored;
+        if (!RunCaptureStdout({kPanelCtlScript, action}, 20, ignored)) {
+            TraceLog(LOG_WARNING, "Painel: '%s %s' falhou (ver panel.log)", kPanelCtlScript, action);
+        }
+    }).detach();
+}
+
+// Segundos que faltam até `limit`, arredondado pra cima (o "3 s" do aviso
+// só vira "2 s" quando de fato passou mais um segundo).
+int SecondsLeft(double held, double limit) {
+    return std::max(1, static_cast<int>(std::ceil(limit - held)));
+}
+
+struct NoticeText {
+    std::string title;
+    std::string subtitle;
+    float progress = -1.0f;
+};
+
+// Feedback enquanto um botão de segurar está pressionado (ver
+// include/config.h, kPanelResetHoldSeconds e vizinhos). false = nada
+// a mostrar (toque curto ainda dentro do tempo de um toque normal).
+bool HoldFeedback(const RemoteInput &input, NoticeText &out) {
+    if (input.holding == RemoteButton::kNone || input.heldSeconds < kHoldFeedbackSeconds) {
+        return false;
+    }
+    double held = input.heldSeconds;
+    if (input.holding == RemoteButton::kKey3) {
+        if (held < kPanelResetHoldSeconds) {
+            out.title = "RESET DO PEC EM " +
+                        std::to_string(SecondsLeft(held, kPanelResetHoldSeconds)) + " s";
+            out.subtitle = "Apaga o vínculo do e-SUS. Solte para cancelar";
+            out.progress = static_cast<float>(held / kPanelResetHoldSeconds);
+        } else {
+            out.title = "PAINEL RESETADO";
+            out.subtitle = "Reabrindo o e-SUS sem cookies";
+            out.progress = 1.0f;
+        }
+        return true;
+    }
+    if (input.holding == RemoteButton::kPower) {
+        if (held < kPowerRebootHoldSeconds) {
+            out.title = "REINICIANDO EM " +
+                        std::to_string(SecondsLeft(held, kPowerRebootHoldSeconds)) + " s";
+            out.subtitle = "Solte o POWER para cancelar";
+            out.progress = static_cast<float>(held / kPowerRebootHoldSeconds);
+        } else {
+            out.title = "REINICIANDO...";
+            out.subtitle = "Aguarde";
+            out.progress = 1.0f;
+        }
+        return true;
+    }
+    return false;
+}
+
 int main() {
     // SIGTERM/SIGINT (exec.sh, systemd, Ctrl+C): sai pelo caminho normal
     // do loop, que para o mpv e o download em andamento antes de fechar.
@@ -155,10 +217,10 @@ int main() {
         TraceLog(LOG_WARNING, "VideoPlayer: nao foi possivel abrir o display X11; slides de video serao ignorados.");
     }
 
-    // Controle remoto (VOL+/VOL-/MUTE): so mostra o indicador se o
-    // receptor IR foi encontrado de verdade (ver
-    // include/remote_control.h). POWER continua fora do processo, via
-    // triggerhappy — ver docs/memory/known-issues.md item -6.
+    // Controle remoto: so mostra o indicador se o receptor IR foi
+    // encontrado de verdade (ver include/remote_control.h). O reboot do
+    // POWER continua fora do processo, via triggerhappy — aqui só a
+    // contagem na tela. Ver docs/memory/known-issues.md item -6.
     RemoteControl remote;
     if (!remote.IsAvailable()) {
         TraceLog(LOG_WARNING,
@@ -168,6 +230,9 @@ int main() {
     double volumeOsdUntil = 0.0;
     int volumeOsdPercent = 0;
     bool volumeOsdMuted = false;
+    double noticeOsdUntil = 0.0;
+    NoticeText notice;
+    bool panelResetFired = false;
 
     size_t currentIndex = 0;
     bool startSlide = true; // força (re)início mesmo se o id não mudou (lista de 1 item)
@@ -267,23 +332,54 @@ int main() {
             startSlide = true;
         }
 
-        RemoteButton remoteButton = remote.PollButtonPress();
-        if (remoteButton != RemoteButton::kNone) {
+        RemoteInput remoteInput = remote.Poll(GetTime());
+        bool volumeAction = remoteInput.tap == RemoteButton::kVolumeUp ||
+                            remoteInput.tap == RemoteButton::kVolumeDown;
+        bool muteAction = remoteInput.tap == RemoteButton::kMute;
+        if (remoteInput.tap == RemoteButton::kKey1) {
+            // Fecha navegador extra; o loop do exec.sh reabre o painel
+            // oficial se ele não estiver de pé.
+            TraceLog(LOG_WARNING, "Controle: 1 -> restaurando o modo quiosque");
+            RunPanelCtlDetached("kiosk");
+            notice = {"MODO QUIOSQUE", "Restaurando as janelas oficiais", -1.0f};
+            noticeOsdUntil = GetTime() + kNoticeOsdDurationSeconds;
+        }
+        if (remoteInput.tap == RemoteButton::kKey2) {
+            // exec.sh sobe o app de novo em 2s; o painel não é tocado.
+            TraceLog(LOG_WARNING, "Controle: 2 -> recarregando o Display");
+            g_running.store(false);
+        }
+        // 3 dispara uma vez quando completa o tempo, ainda segurado; só
+        // rearma depois de soltar.
+        if (remoteInput.holding == RemoteButton::kKey3) {
+            if (!panelResetFired && remoteInput.heldSeconds >= kPanelResetHoldSeconds) {
+                TraceLog(LOG_WARNING, "Controle: 3 segurado %.1fs -> reset do painel",
+                         remoteInput.heldSeconds);
+                RunPanelCtlDetached("reset");
+                panelResetFired = true;
+            }
+        } else if (panelResetFired) {
+            panelResetFired = false;
+            notice = {"PAINEL RESETADO", "Reabrindo o e-SUS sem cookies", -1.0f};
+            noticeOsdUntil = GetTime() + kNoticeOsdDurationSeconds;
+        }
+        if (remoteInput.tap == RemoteButton::kHome) {
+            // Menu "Configuração da BTV" ainda não existe (ver
+            // docs/memory/known-issues.md item -13).
+            TraceLog(LOG_WARNING, "Controle: HOME recebido (menu de configuracao ainda nao implementado)");
+            notice = {"CONFIGURAÇÃO DA BTV", "Menu ainda não disponível nesta versão", -1.0f};
+            noticeOsdUntil = GetTime() + kNoticeOsdDurationSeconds;
+        }
+
+        if (volumeAction || muteAction) {
             int newPercent = 0;
             bool newMuted = false;
             bool adjusted = false;
-            switch (remoteButton) {
-                case RemoteButton::kVolumeUp:
-                    adjusted = AdjustVolume(+5, false, newPercent, newMuted);
-                    break;
-                case RemoteButton::kVolumeDown:
-                    adjusted = AdjustVolume(-5, false, newPercent, newMuted);
-                    break;
-                case RemoteButton::kMute:
-                    adjusted = AdjustVolume(0, true, newPercent, newMuted);
-                    break;
-                default:
-                    break;
+            if (muteAction) {
+                adjusted = AdjustVolume(0, true, newPercent, newMuted);
+            } else {
+                int delta = remoteInput.tap == RemoteButton::kVolumeUp ? +5 : -5;
+                adjusted = AdjustVolume(delta, false, newPercent, newMuted);
             }
             if (adjusted) {
                 volumeOsdPercent = newPercent;
@@ -302,13 +398,17 @@ int main() {
                 }
             }
         }
+        NoticeText holdNotice;
+        bool showHoldOsd = HoldFeedback(remoteInput, holdNotice);
+        bool showNoticeOsd = !showHoldOsd && GetTime() < noticeOsdUntil;
         bool showVolumeOsd = GetTime() < volumeOsdUntil;
 
         // FPS dinâmico: 30 só quando algo anima (spinner de carregamento,
         // indicador de volume); no resto do tempo a tela é estática (texto,
         // imagem, ou o mpv desenhando o vídeo na janela dele) e 10fps
         // bastam — corta boa parte do CPU do próprio app no RK3229.
-        bool animating = showVolumeOsd || (activeType == CampaignType::Video && !videoReady);
+        bool animating = showVolumeOsd || showHoldOsd ||
+                         (activeType == CampaignType::Video && !videoReady);
         SetTargetFPS(animating ? 30 : 10);
 
         int screenW = GetScreenWidth();
@@ -333,7 +433,11 @@ int main() {
         ClearBackground(kColorAppBackground);
         DrawChromeBar(headerRect, kHeaderTitle, kHeaderSubtitle, kColorHeaderBackground,
                       kColorChromeText);
-        if (showVolumeOsd) {
+        if (showHoldOsd || showNoticeOsd) {
+            const NoticeText &n = showHoldOsd ? holdNotice : notice;
+            DrawNoticeOsd(footerRect, n.title.c_str(), n.subtitle.c_str(), n.progress,
+                          kColorFooterBackground, kColorChromeText);
+        } else if (showVolumeOsd) {
             DrawVolumeOsd(footerRect, volumeOsdPercent, volumeOsdMuted, kColorFooterBackground,
                           kColorChromeText);
         } else {

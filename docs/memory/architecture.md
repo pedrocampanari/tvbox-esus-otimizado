@@ -255,14 +255,29 @@ regra `udev` própria pra carregá-lo, `ir-keytable`) fica em
 `install.sh`. Detalhe completo (scancodes, formato do `.toml`, bugs
 reais corrigidos no caminho) em [[known-issues]] item -6.
 
-Duas teclas são tratadas em lugares diferentes, por decisão deliberada:
+O keymap é versionado em `config/rc-rk322x-tvbox.toml` (install.sh o
+copia pra `/etc/rc_keymaps/`). As teclas são tratadas em lugares
+diferentes, por decisão deliberada:
 - **`KEY_POWER`** → `triggerhappy` (daemon de sistema, fora do
-  `tvbox_esus_app`) chama `/usr/sbin/poweroff` direto. Fica fora do
-  processo principal de propósito: um desligamento real não precisa de
-  feedback visual, e um daemon de sistema independente é mais robusto
-  pra essa ação específica (continua funcionando mesmo que o app
-  trave/reinicie).
-- **`KEY_VOLUMEUP`/`KEY_VOLUMEDOWN`/`KEY_MUTE`** → lidas DENTRO do
+  `tvbox_esus_app`): segurar 5 s reinicia (`tvbox-power-hold`, ver
+  [[known-issues]] item -13). Fica fora do processo principal de
+  propósito: reiniciar é a recuperação justamente quando o app trava.
+  O app também lê `KEY_POWER`, mas **só desenha a contagem** no rodapé.
+- Mapa da seção 7 do manual da BTV11: **`KEY_MUTE`/`KEY_1`/`KEY_2`/
+  `KEY_HOME`** viram `RemoteInput.tap` só na descida (segurar não
+  repete): 1 = `panel-ctl.sh kiosk` (fecha navegador extra), 2 = o app
+  sai e o exec.sh o sobe em 2 s, HOME = aviso (menu futuro).
+  **`KEY_3`** é "botão de segurar" (`holding`): aos 10 s, ainda
+  segurado, dispara `panel-ctl.sh reset` uma vez
+  (`kPanelResetHoldSeconds` em `include/config.h`).
+- **O Xorg ignora o receptor** (`/etc/X11/xorg.conf.d/90-tvbox-ignore-ir.conf`,
+  install.sh): sem isso o "libinput keyboard catchall" entregava cada
+  botão também à janela em foco (1/2/3 digitados no painel e-SUS).
+- **O systemd-logind ignora `KEY_POWER`** (`/etc/systemd/logind.conf.d/
+  tvbox-power-key.conf`): no padrão ele desligava o aparelho num toque
+  curto, passando por cima do triggerhappy.
+- **`KEY_VOLUMEUP`/`KEY_VOLUMEDOWN`/`KEY_MUTE`** (e o resto, exceto o
+  reboot do POWER) → lidas DENTRO do
   `tvbox_esus_app` (`include/remote_control.h`/`src/remote_control.cpp`),
   que abre `/dev/input/eventN` do receptor diretamente (acha o device
   certo varrendo `/proc/bus/input/devices` pelo nome do driver
@@ -325,3 +340,14 @@ código). Header/footer, ao contrário, nunca são cobertos pelo `mpv`
   ser executado com a raiz do projeto como cwd (é o que `make run` já
   faz). Ao empacotar pro dispositivo, copiar `assets/` e `config/`
   junto do binário, mantendo essa mesma estrutura relativa.
+
+## Painel institucional (Chromium) — controle e recuperação
+`exec.sh` mantém três laços em segundo plano: o do Chromium (reabre se
+sair; se existir `.panel-reset-request`, apaga o perfil antes de
+reabrir), o watchdog de rede (servidor do painel voltou → reabre) e o
+do app de vídeo. `panel-ctl.sh reload|reset` é a única porta de
+entrada pra mexer no Chromium: ele só encerra o processo (casando pelo
+`--user-data-dir`, TERM e KILL depois de 10 s); quem apaga e reabre é
+o laço, pra nunca apagar o perfil com o navegador ainda gravando nele.
+Recarregar = reabrir o processo (não há `xdotool`/F5): custa alguns
+segundos no RK3229, mas é determinístico e não exige pacote novo.

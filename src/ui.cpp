@@ -291,4 +291,27 @@ void DrawVolumeOsd(Rectangle area, int percent, bool muted, Color background, Co
     }
 }
 
+void DrawNoticeOsd(Rectangle area, const char *title, const char *subtitle, float progress,
+                   Color background, Color foreground) {
+    DrawRectangleRec(area, background);
+
+    float titleSize = Clamp(13.0f, 0.040f, 20.0f, area.width);
+    float subtitleSize = Clamp(11.0f, 0.030f, 16.0f, area.width);
+    float blockHeight = titleSize * 1.3f + subtitleSize;
+    float y = area.y + (area.height - blockHeight) / 2.0f;
+    float centerX = area.x + area.width / 2.0f;
+
+    DrawCenteredText(BoldFont(), title, titleSize, foreground, centerX, y);
+    DrawCenteredText(RegularFont(), subtitle, subtitleSize, foreground, centerX,
+                     y + titleSize * 1.3f);
+
+    if (progress >= 0.0f) {
+        float barHeight = Clamp(3.0f, 0.010f, 6.0f, area.width);
+        Rectangle bar = {area.x, area.y + area.height - barHeight, area.width, barHeight};
+        DrawRectangleRec(bar, Fade(foreground, 0.3f));
+        bar.width *= std::clamp(progress, 0.0f, 1.0f);
+        DrawRectangleRec(bar, foreground);
+    }
+}
+
 } // namespace kiosk

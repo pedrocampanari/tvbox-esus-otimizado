@@ -27,6 +27,7 @@ cmake_install.cmake
 kiosk.log
 panel.log
 .chromium-kiosk-profile/
+.panel-reset-request
 
 # Cache local dos vídeos baixados (include/video_cache.h)
 /cache/

@@ -122,28 +122,63 @@ RemoteControl::~RemoteControl() {
     if (fd_ >= 0) close(fd_);
 }
 
-RemoteButton RemoteControl::PollButtonPress() {
-    if (fd_ < 0) return RemoteButton::kNone;
+RemoteInput RemoteControl::Poll(double nowSeconds) {
+    RemoteInput result;
+    if (fd_ < 0) return result;
 
-    RemoteButton result = RemoteButton::kNone;
     struct input_event ev;
     // Drena todos os eventos pendentes neste frame, nao so o primeiro —
     // evita acumular atraso se o loop principal ficar momentaneamente
-    // ocupado (ex.: spawn do mpv). Se vieram varios num unico frame, o
-    // ultimo botao pressionado "vence" (efeito esperado pelo usuario).
+    // ocupado (ex.: spawn do mpv).
     while (read(fd_, &ev, sizeof(ev)) == static_cast<ssize_t>(sizeof(ev))) {
-        if (ev.type != EV_KEY || ev.value == 0) continue; // ignora soltura
-        // value 2 = repeticao automatica (botao segurado): vale pra VOL+/
-        // VOL-, que sobem/descem continuamente. MUTE so no toque inicial,
-        // senao alternaria sem parar enquanto segurado.
+        if (ev.type != EV_KEY) continue;
+
+        RemoteButton holdKey = RemoteButton::kNone;
         switch (ev.code) {
-            case KEY_VOLUMEUP:   result = RemoteButton::kVolumeUp;   break;
-            case KEY_VOLUMEDOWN: result = RemoteButton::kVolumeDown; break;
+            // value 1 = toque, 2 = repeticao automatica (segurado: o
+            // volume continua andando), 0 = soltura (ignorada).
+            case KEY_VOLUMEUP:
+                if (ev.value != 0) result.tap = RemoteButton::kVolumeUp;
+                continue;
+            case KEY_VOLUMEDOWN:
+                if (ev.value != 0) result.tap = RemoteButton::kVolumeDown;
+                continue;
+            // So a descida (1): repeticao/soltura nao repetem a acao.
             case KEY_MUTE:
-                if (ev.value == 1) result = RemoteButton::kMute;
-                break;
-            default: break;
+                if (ev.value == 1) result.tap = RemoteButton::kMute;
+                continue;
+            case KEY_HOME:
+                if (ev.value == 1) result.tap = RemoteButton::kHome;
+                continue;
+            case KEY_1:
+                if (ev.value == 1) result.tap = RemoteButton::kKey1;
+                continue;
+            case KEY_2:
+                if (ev.value == 1) result.tap = RemoteButton::kKey2;
+                continue;
+            case KEY_3:     holdKey = RemoteButton::kKey3;  break;
+            case KEY_POWER: holdKey = RemoteButton::kPower; break;
+            default: continue;
         }
+
+        if (ev.value == 0) {
+            if (holdButton_ == holdKey) {
+                result.released = holdKey;
+                result.releasedAfterSeconds = nowSeconds - holdStart_;
+                holdButton_ = RemoteButton::kNone;
+            }
+        } else if (holdButton_ != holdKey) {
+            // Toque (1), ou repeticao (2) de um toque cuja descida se
+            // perdeu: comeca a contar daqui. Outro botao de segurar que
+            // estivesse "preso" e descartado sem acao.
+            holdButton_ = holdKey;
+            holdStart_ = nowSeconds;
+        }
+    }
+
+    if (holdButton_ != RemoteButton::kNone) {
+        result.holding = holdButton_;
+        result.heldSeconds = nowSeconds - holdStart_;
     }
     return result;
 }
@@ -205,12 +240,10 @@ bool AdjustVolume(int deltaPercent, bool toggleMute, int &outPercent, bool &outM
                          ignored);
     }
 
-    if (!GetVolume(control, outPercent, outMuted, hasSwitch)) return false;
-    // Persiste o volume na hora: o kiosk costuma ser desligado tirando da
-    // tomada, sem passar pelo `alsactl store` do shutdown — exec.sh
-    // restaura este estado a cada início.
-    RunCaptureStdout({"alsactl", "store"}, 3, ignored);
-    return true;
+    // Sem `alsactl store`: o volume volta a 60% a cada boot (exec.sh,
+    // BOOT_VOLUME_PERCENT — pedido do manual da BTV11), entao persistir
+    // cada toque so gastaria escrita na flash (ver known-issues -12).
+    return GetVolume(control, outPercent, outMuted, hasSwitch);
 }
 
 } // namespace kiosk

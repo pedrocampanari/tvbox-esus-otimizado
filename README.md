@@ -94,7 +94,7 @@ com login normal. Ver `docs/memory/known-issues.md` item -10.
 
 `exec.sh` cuida de entrar no diretório certo (pros caminhos relativos
 de `assets/`/`config/` funcionarem), desligar blank/DPMS/screensaver do
-X, restaurar o volume salvo, reiniciar o app sozinho se ele cair, **e
+X, fixar o volume de boot em 60%, reiniciar o app sozinho se ele cair, **e
 subir o Chromium em modo app** (sem barra de endereço/abas) mostrando o
 painel institucional nos outros 75% da tela (o app de vídeo fica
 ancorado nos 25% da direita — ver `kAnchorWindowToRightEdge` em
@@ -116,10 +116,35 @@ exigiria um compositor Wayland por baixo, reabrindo o problema de
 `docs/memory/known-issues.md` item 5). Chromium em modo `--app` é um
 cliente X11 comum, sem esse conflito.
 
+### Controle remoto
+
+Segue a seção 7 do manual da BTV11 (`docs/files/`). Todos confirmados
+com o controle físico no RK3229 em 2026-10-26.
+
+| Botão | Ação |
+|---|---|
+| VOL+ / VOL- | volume (±5%, segurar repete), indicador no rodapé |
+| MUTE | mudo liga/desliga ("VOLUME: MUDO") |
+| 1 | volta ao modo quiosque: fecha navegador extra, painel e Display intactos |
+| 2 | recarrega só o Display (25%), painel intacto |
+| 3 segurado 10 s | **reseta o vínculo do PEC**: apaga cookies/perfil do e-SUS e reabre (exige novo pareamento) |
+| POWER segurado 5 s | reinicia o aparelho (toque curto não faz nada) |
+| HOME | só mostra aviso: o menu "Configuração da BTV" ainda não existe |
+
+O rodapé mostra a contagem enquanto 3 ou POWER estão segurados (soltar
+antes cancela). Na mão, via SSH: `./panel-ctl.sh reload|reset|kiosk`. Se o
+servidor do painel cair, o `exec.sh` reabre o painel sozinho quando ele
+voltar. Estado e pendências: `docs/memory/known-issues.md` item -13.
+
 Logs ficam na raiz do projeto: `kiosk.log` (app de vídeo, inclui as
 linhas `VideoCache:` de download/exibição) e `panel.log` (Chromium).
 
 ### Atualizar o dispositivo
+
+Acesso: `ssh root@192.168.101.213` (cabo de rede, interface `end0`, IP
+por DHCP — antes era `.196`; se sumir, ver o IP no roteador e conferir a
+chave de host: ED25519 `SHA256:9ARocRt9SvJM6B9If0NBzFobCoZOZuhVtBo96tFgtzU`).
+Login por chave (`ssh-copy-id` feito em 2026-10-26).
 
 ```sh
 cd /root/tvbox-esus-otimizado

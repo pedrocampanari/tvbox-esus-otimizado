@@ -1,5 +1,56 @@
 # Problemas e decisões em aberto conhecidas
 
+## -13. Adequação ao manual da BTV11 (`docs/files/Manual-eSUSTV_BTV11_Pré-Validação.pdf`) — CONTROLE REMOTO RESOLVIDO em 2026-10-26 (testado no RK3229 com o controle físico); menu HOME pendente
+O manual é de outro aparelho (BTV B11/Amlogic, Firefox, menu Python/
+Tkinter) e é tratado como **especificação de comportamento**, não de
+implementação. Em 2026-10-26 o PDF já está completo (22 págs.).
+
+### Controle remoto = seção 7 do manual (feito e confirmado no aparelho)
+| Botão | Scancode (necx) | Onde é tratado |
+|---|---|---|
+| HOME | `0x50518` | app: só aviso no rodapé (menu não existe) |
+| 1 | `0x5054e` | app → `panel-ctl.sh kiosk`: fecha Chromium/Firefox principal fora do `--user-data-dir` do kiosk (filhos `--type=` saem junto) |
+| 2 | `0x5050d` | app sai (`g_running=false`), exec.sh sobe em 2 s; painel intacto |
+| 3 segurado 10 s | `0x5050c` | app → `panel-ctl.sh reset` aos 10 s ainda segurado, uma vez por segurada |
+| POWER ≥ 5 s | `0x50540` | triggerhappy → `tvbox-power-hold`; o app só desenha a contagem |
+| VOL+/VOL-/MUTE | ver item -6 | app (±5% absoluto, MUDO) |
+
+Medido com `ir-keytable -t`: o controle repete o código a cada ~108 ms
+pelo tempo todo que o botão fica apertado (3 segurado 12,9 s = 120
+repetições), então "segurar 10 s" funciona. Testes reais: 3 solto aos
+3,4 s cancelou; 1 segurado 3,8 s = uma ação só; POWER curto ignorado;
+POWER 5 s reiniciou e o kiosk voltou sozinho.
+
+**Dois bugs achados no aparelho, corrigidos no install.sh:**
+- **Toque curto no POWER desligava o box** — não era o triggerhappy, era
+  o `systemd-logind` (padrão `HandlePowerKey=poweroff`; journal: "Power
+  key pressed short. Powering off..."). Agora
+  `/etc/systemd/logind.conf.d/tvbox-power-key.conf` com
+  `HandlePowerKey=ignore` + `HandlePowerKeyLongPress=ignore`, aplicado
+  com `systemctl reload systemd-logind` (sem derrubar a sessão X).
+- **O Xorg recebia o controle como teclado** ("libinput keyboard
+  catchall" no `Xorg.0.log`): 1/2/3 seriam digitados no painel e-SUS,
+  HOME rolaria a página. Agora `/etc/X11/xorg.conf.d/90-tvbox-ignore-ir.conf`
+  (`Option "Ignore" "on"` pro `gpio_ir_recv`); vale a partir do próximo
+  `startx`. Confirmado: "Ignoring device from InputClass".
+
+⚠️ **O reset do 3 já rodou de verdade uma vez** (2026-10-26 14:38, num
+teste em que o 3 foi segurado 10 s): o perfil `.chromium-kiosk-profile`
+foi apagado e o painel precisa ser **pareado de novo** no e-SUS. Nos
+próximos testes, nunca pedir pra segurar o 3 até o fim sem combinar antes.
+
+Feito antes (2026-10-23, agora também no aparelho): volume 60% a cada
+boot (confirmado após reboot), watchdog de rede do painel no exec.sh
+(reload quando o servidor volta), MUTE sem `alsactl store`.
+
+**Ainda falta**: menu "Configuração da BTV" (rede/UBS/"Testar conexão e
+entrar", abre no primeiro uso, sem rede ou no HOME) — fazer no próprio
+app Raylib, não em Python; boot esperando a rede ~15 s; conteúdo do
+servidor por UBS (`/display/{slug}`) no lugar da lista fixa (item 1);
+NetworkManager ou `wpa_supplicant` com várias redes (item -7). Confirmar
+na tela que o reset do 3 de fato desfaz o pareamento (o perfil foi
+apagado; falta ver o e-SUS pedindo pareamento).
+
 ## -12. Arquivos zerados depois de tirar da tomada (`commit=120` do Armbian) — PARCIALMENTE MITIGADO em 2026-09-30; decisão em aberto
 Visto no dispositivo: depois de um religamento às 10:50, arquivos
 gravados poucos minutos antes voltaram com **0 byte** — `install.sh`,
@@ -15,7 +66,7 @@ Mitigação no código: o cache de vídeos faz `fsync` do arquivo baixado,
 do `manifest.tsv` (antes do `rename`) e do diretório, e ignora arquivos
 de 0 byte ao carregar.
 **Em aberto (decisão do usuário)**: reduzir o `commit` (ex.: 15-30s)
-protege também logs, `asound.state` e o perfil do Chromium (pareamento
+protege também logs e o perfil do Chromium (pareamento
 do painel!) ao custo de mais escrita na flash. Até lá: depois de
 atualizar o dispositivo, rodar `sync` antes de desligar da tomada.
 

@@ -32,6 +32,12 @@ set -u
 
 PANEL_ENABLED="${PANEL_ENABLED:-1}"
 PANEL_URL="${PANEL_URL:-https://esus.treslagoas.ms.gov.br/painel}"
+# Volume com que o kiosk liga, sempre (manual da BTV11: "o volume inicia
+# em 60% a cada boot") — o último volume ajustado no controle NÃO é
+# lembrado de propósito.
+BOOT_VOLUME_PERCENT="${BOOT_VOLUME_PERCENT:-60}"
+# Watchdog de rede do painel: intervalo entre checagens (segundos).
+PANEL_NET_CHECK_SECONDS="${PANEL_NET_CHECK_SECONDS:-30}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -85,11 +91,10 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') kiosk iniciado" >> "$LOG_FILE"
 # volume em hardware — install.sh cria um controle "Master" por software
 # (softvol, /etc/alsa/conf.d/99-tvbox-hdmi-softvol.conf). Esse controle
 # só passa a existir depois que o PCM padrão é aberto uma vez; abre por
-# 0,1s em silêncio e restaura o último volume salvo pelo app (ver
-# src/remote_control.cpp, `alsactl store` a cada ajuste). Tudo opcional.
+# 0,1s em silêncio e fixa o volume de boot. Tudo opcional.
 if [ -f /etc/alsa/conf.d/99-tvbox-hdmi-softvol.conf ]; then
   timeout 3 aplay -q -D default -f S16_LE -r 48000 -c 2 -s 4800 /dev/zero 2>/dev/null || true
-  alsactl restore 2>/dev/null || true
+  amixer -q sset Master "${BOOT_VOLUME_PERCENT}%" 2>/dev/null || true
 fi
 
 # --- Painel institucional (Chromium) nos outros 75% da tela ---
@@ -150,7 +155,10 @@ if [ "$PANEL_ENABLED" = "1" ]; then
     SCREEN_H="${SCREEN_H%%+*}"
     PANEL_W=$((SCREEN_W * 75 / 100))
 
+    # Mesmos caminhos do panel-ctl.sh (reload/reset pedidos pelo
+    # controle remoto e pelo watchdog de rede abaixo).
     PANEL_PROFILE_DIR="$SCRIPT_DIR/.chromium-kiosk-profile"
+    PANEL_RESET_FLAG="$SCRIPT_DIR/.panel-reset-request"
     PANEL_LOG="$SCRIPT_DIR/panel.log"
 
     (
@@ -172,6 +180,47 @@ if [ "$PANEL_ENABLED" = "1" ]; then
           >> "$PANEL_LOG" 2>&1
         echo "$(date '+%Y-%m-%d %H:%M:%S') painel (chromium) saiu; reiniciando em 3s" >> "$PANEL_LOG"
         sleep 3
+        # Reset pedido (panel-ctl.sh reset): só agora, com o Chromium já
+        # fora, apaga o perfil inteiro — cookies, localStorage e cache.
+        # O e-SUS volta como no primeiro boot (sem vínculo).
+        if [ -f "$PANEL_RESET_FLAG" ]; then
+          rm -rf "$PANEL_PROFILE_DIR"
+          rm -f "$PANEL_RESET_FLAG"
+          sync
+          echo "$(date '+%Y-%m-%d %H:%M:%S') perfil do painel apagado (reset de cookies)" >> "$PANEL_LOG"
+        fi
+      done
+    ) &
+
+    # Watchdog de rede: se o painel abriu (ou ficou) sem acesso ao
+    # servidor, o Chromium fica parado numa página de erro — ou, pior,
+    # com a casca do e-SUS carregada e os dados sem atualizar. Quando o
+    # servidor volta a responder, reabre o painel (perfil preservado: o
+    # vínculo do dispositivo não se perde). Só age na TRANSIÇÃO
+    # fora-do-ar → no-ar; com a rede estável, não mexe em nada.
+    # HEAD em vez de GET: dezenas de bytes por checagem, não a página
+    # inteira. Qualquer resposta HTTP abaixo de 500 conta como "no ar"
+    # (até um 405 de servidor que não aceita HEAD); 000 (sem conexão,
+    # DNS, timeout) e 5xx contam como fora.
+    (
+      was_down=0
+      while true; do
+        code=$(curl -s -o /dev/null -I -w '%{http_code}' --max-time 10 "$PANEL_URL" 2>/dev/null)
+        if [ "${code:-000}" -ge 100 ] 2>/dev/null && [ "$code" -lt 500 ]; then
+          if [ "$was_down" = "1" ]; then
+            echo "$(date '+%Y-%m-%d %H:%M:%S') rede: servidor do painel voltou (HTTP $code); reabrindo painel" >> "$PANEL_LOG"
+            "$SCRIPT_DIR/panel-ctl.sh" reload
+            was_down=0
+          fi
+          sleep "$PANEL_NET_CHECK_SECONDS"
+        else
+          if [ "$was_down" = "0" ]; then
+            echo "$(date '+%Y-%m-%d %H:%M:%S') rede: servidor do painel inacessível (HTTP ${code:-000})" >> "$PANEL_LOG"
+          fi
+          was_down=1
+          # Fora do ar, checa mais rápido: o painel volta logo que der.
+          sleep 10
+        fi
       done
     ) &
 

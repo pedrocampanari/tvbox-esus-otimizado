@@ -51,6 +51,24 @@ constexpr int kVideoLoadTimeoutSeconds = 30;
 // conteúdo normal.
 constexpr float kVolumeOsdDurationSeconds = 2.0f;
 
+// Botoes de segurar do controle remoto (ver include/remote_control.h e a
+// secao 7 do manual da BTV11). 3 segurado kPanelResetHoldSeconds =
+// reseta o painel (apaga o perfil do Chromium: cookies, localStorage,
+// vinculo do e-SUS) assim que o tempo completa; soltar antes cancela. O
+// feedback no rodape aparece a partir de kHoldFeedbackSeconds, pra um
+// toque acidental nao piscar nada na tela.
+constexpr double kHoldFeedbackSeconds = 1.0;
+constexpr double kPanelResetHoldSeconds = 10.0;
+// POWER segurado reinicia o aparelho. O valor que vale de verdade e o
+// POWER_HOLD_SECONDS do script do triggerhappy (install.sh); este aqui
+// so alimenta a contagem regressiva na tela — manter os dois iguais.
+constexpr double kPowerRebootHoldSeconds = 5.0;
+// Quanto tempo o aviso "PAINEL RESETADO" fica no rodape.
+constexpr float kNoticeOsdDurationSeconds = 5.0f;
+// Script que reabre (reload) ou reseta o Chromium do painel — ver
+// panel-ctl.sh. Relativo ao cwd (raiz do projeto, garantido pelo exec.sh).
+constexpr const char *kPanelCtlScript = "./panel-ctl.sh";
+
 // Fonte de conteúdo: por autorização do dono do sistema (2026-09-26),
 // v1 usa uma lista FIXA de campanhas/vídeos (config/campaigns.conf),
 // carregada uma única vez na inicialização — sem ficar buscando a URL

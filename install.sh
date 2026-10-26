@@ -31,6 +31,8 @@ done
 
 log() { printf '\n==> %s\n' "$1"; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 if [ "$(id -u)" = "0" ]; then
   SUDO=""
 else
@@ -160,19 +162,11 @@ done
 # controle real desta unidade — ver docs/memory/known-issues.md.
 # VOL+/VOL-/MUTE re-capturados botão a botão em 2026-09-30: o mapeamento
 # de 2026-09-27 estava deslocado (VOL- somava, VOL+ não fazia nada).
-log "Gravando keymap do controle remoto IR (POWER/VOL+/VOL-/MUTE)"
+# O keymap fica versionado em config/rc-rk322x-tvbox.toml (adicionar um
+# botão novo = editar uma linha lá e rodar este script de novo).
+log "Gravando keymap do controle remoto IR (config/rc-rk322x-tvbox.toml)"
 $SUDO mkdir -p /etc/rc_keymaps
-$SUDO tee /etc/rc_keymaps/rc-rk322x-tvbox.toml > /dev/null <<'TOML'
-[[protocols]]
-name = "rc-rk322x-tvbox"
-protocol = "nec"
-variant = "necx"
-[protocols.scancodes]
-0x50540 = "KEY_POWER"
-0x50511 = "KEY_VOLUMEUP"
-0x5054c = "KEY_VOLUMEDOWN"
-0x50541 = "KEY_MUTE"
-TOML
+$SUDO install -m 644 "$SCRIPT_DIR/config/rc-rk322x-tvbox.toml" /etc/rc_keymaps/rc-rk322x-tvbox.toml
 
 # Regra própria em vez de confiar no casamento automático do
 # /etc/rc_maps.cfg do pacote ir-keytable: mesmo padrão de decisão que já
@@ -194,21 +188,104 @@ $SUDO udevadm control --reload-rules
 # de fato cria rc0 do zero), nunca imediatamente após instalar a regra.
 $SUDO udevadm trigger --action=add --subsystem-match=rc
 
+# O Xorg pega o gpio_ir_recv como teclado ("libinput keyboard catchall",
+# visto no Xorg.0.log do RK3229 em 2026-10-26): sem isto, cada botão do
+# controle vira também uma tecla na janela em foco — o 1/2/3 do manual
+# seriam digitados no painel e-SUS e o HOME rolaria a página. Ninguém
+# precisa do controle via X: o app e o triggerhappy leem /dev/input
+# direto. Vale a partir do próximo startx (reboot).
+log "Fazendo o Xorg ignorar o receptor IR (o app lê /dev/input direto)"
+$SUDO mkdir -p /etc/X11/xorg.conf.d
+$SUDO tee /etc/X11/xorg.conf.d/90-tvbox-ignore-ir.conf > /dev/null <<'XORGIR'
+Section "InputClass"
+    Identifier "tvbox: controle IR fora do X"
+    MatchProduct "gpio_ir_recv"
+    Option "Ignore" "on"
+EndSection
+XORGIR
+
 # triggerhappy: daemon minúsculo (não precisa de X, não precisa de
-# desktop) que converte KEY_POWER em poweroff real. VOL+/VOL-/MUTE NÃO
-# ficam aqui: o próprio binário C++ lê /dev/input diretamente (ver
-# include/remote_control.h) pra poder desenhar o indicador de volume no
-# rodapé, e ele mesmo chama o `amixer` — deixar o triggerhappy reagindo
-# a essas teclas TAMBÉM duplicaria o ajuste (dois processos mexendo no
-# mesmo mixer pro mesmo toque de botão). POWER continua aqui de
-# propósito: um desligamento real não precisa de feedback visual, e fica
-# mais robusto ficar fora do processo principal do kiosk.
-log "Configurando triggerhappy (POWER = poweroff)"
+# desktop) que converte KEY_POWER segurado em reboot. VOL+/VOL-/MUTE/
+# HOME/1/2/3 NÃO ficam aqui: o próprio binário C++ lê /dev/input diretamente (ver
+# include/remote_control.h) pra poder desenhar o indicador no rodapé, e
+# ele mesmo chama o `amixer` — deixar o triggerhappy reagindo a essas
+# teclas TAMBÉM duplicaria o ajuste. POWER continua aqui de propósito:
+# o reboot é a ferramenta de recuperação justamente quando o app trava,
+# então não pode depender dele (o app só desenha a contagem regressiva).
+#
+# POWER segurado (manual da BTV11: "segurar ~5 s para reiniciar"): o
+# toque (valor 1) arma um reboot para daqui a POWER_HOLD_SECONDS; a
+# soltura (valor 0) desarma. Toque curto não faz nada — antes, um toque
+# acidental desligava o aparelho (`poweroff`) e só voltava tirando da
+# tomada. Depende do receptor emitir a soltura só quando o controle para
+# de repetir o código (confirmado em `ir-keytable -t`: repetição correta).
+# O systemd-logind também escuta KEY_POWER de qualquer /dev/input (o
+# receptor IR incluso) e, no padrão HandlePowerKey=poweroff, DESLIGA o
+# aparelho num toque curto — passando por cima do triggerhappy. Visto no
+# RK3229 em 2026-10-26 ("Power key pressed short. Powering off..."). Só
+# o triggerhappy decide o que o POWER faz.
+log "Desligando a reação do systemd-logind à tecla POWER"
+$SUDO mkdir -p /etc/systemd/logind.conf.d
+$SUDO tee /etc/systemd/logind.conf.d/tvbox-power-key.conf > /dev/null <<'LOGIND'
+[Login]
+HandlePowerKey=ignore
+HandlePowerKeyLongPress=ignore
+LOGIND
+# reload (SIGHUP) relê a configuração sem derrubar as sessões abertas.
+$SUDO systemctl reload systemd-logind 2>/dev/null || $SUDO kill -HUP "$(pidof systemd-logind)" 2>/dev/null || true
+
+log "Configurando triggerhappy (POWER segurado 5s = reboot)"
+$SUDO tee /usr/local/sbin/tvbox-power-hold > /dev/null <<'POWERHOLD'
+#!/bin/sh
+# Chamado pelo triggerhappy: `press` arma o reboot, `release` desarma.
+# Manter POWER_HOLD_SECONDS igual a kPowerRebootHoldSeconds
+# (include/config.h), que só alimenta a contagem na tela.
+POWER_HOLD_SECONDS=5
+PIDFILE=/run/tvbox-power-hold.pid
+case "$1" in
+  press)
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      exit 0
+    fi
+    (
+      sleep "$POWER_HOLD_SECONDS"
+      rm -f "$PIDFILE"
+      logger -t tvbox-power "POWER segurado ${POWER_HOLD_SECONDS}s: reiniciando"
+      sync
+      /usr/sbin/reboot
+    ) > /dev/null 2>&1 &
+    echo $! > "$PIDFILE"
+    ;;
+  release)
+    if [ -f "$PIDFILE" ]; then
+      kill "$(cat "$PIDFILE")" 2>/dev/null
+      rm -f "$PIDFILE"
+    fi
+    ;;
+esac
+POWERHOLD
+$SUDO chmod 755 /usr/local/sbin/tvbox-power-hold
+
 $SUDO mkdir -p /etc/triggerhappy/triggers.d
 $SUDO tee /etc/triggerhappy/triggers.d/tvbox-remote.conf > /dev/null <<'THD'
-KEY_POWER 1 /usr/sbin/poweroff
+KEY_POWER 1 /usr/local/sbin/tvbox-power-hold press
+KEY_POWER 0 /usr/local/sbin/tvbox-power-hold release
 THD
-$SUDO systemctl enable --now triggerhappy
+
+# O unit do Debian roda o thd com `--user nobody`, que não pode reiniciar
+# o sistema nem gravar em /run. Override sem o --user, derivado do
+# ExecStart instalado (não chuta caminho/flags de outra versão do pacote).
+thd_exec="$(systemctl cat triggerhappy 2>/dev/null | sed -n 's/^ExecStart=//p' | tail -n 1 || true)"
+case "$thd_exec" in
+  *"--user nobody"*)
+    $SUDO mkdir -p /etc/systemd/system/triggerhappy.service.d
+    printf '[Service]\nExecStart=\nExecStart=%s\n' "${thd_exec/ --user nobody/}" \
+      | $SUDO tee /etc/systemd/system/triggerhappy.service.d/tvbox-root.conf > /dev/null
+    $SUDO systemctl daemon-reload
+    ;;
+esac
+$SUDO systemctl enable triggerhappy
+$SUDO systemctl restart triggerhappy
 
 # Áudio pelo HDMI com volume por software. Diagnóstico no dispositivo
 # real (2026-09-29): NENHUMA placa ALSA (analog/SPDIF/HDMI) expõe
@@ -315,7 +392,6 @@ fi
 # `-nocursor` esconde o cursor no próprio Xorg (o unclutter do exec.sh
 # vira só redundância).
 KIOSK_USER="$(id -un)"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 log "Configurando início automático do kiosk (autologin tty1 + startx) para '$KIOSK_USER'"
 $SUDO mkdir -p /etc/systemd/system/getty@tty1.service.d
 $SUDO tee /etc/systemd/system/getty@tty1.service.d/tvbox-autologin.conf > /dev/null <<GETTY

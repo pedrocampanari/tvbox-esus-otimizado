@@ -1,0 +1,17 @@
+# Keymap do controle remoto IR desta unidade (receptor gpio_ir_recv do
+# RK3229). install.sh copia para /etc/rc_keymaps/ e a regra udev aplica
+# com `ir-keytable -c -w` a cada boot. Ver docs/memory/known-issues.md
+# item -6 (como capturar um scancode novo com `ir-keytable -t`).
+[[protocols]]
+name = "rc-rk322x-tvbox"
+protocol = "nec"
+variant = "necx"
+[protocols.scancodes]
+0x50540 = "KEY_POWER"
+0x50511 = "KEY_VOLUMEUP"
+0x5054c = "KEY_VOLUMEDOWN"
+0x50541 = "KEY_MUTE"
+0x50518 = "KEY_HOME"
+0x5054e = "KEY_1"
+0x5050d = "KEY_2"
+0x5050c = "KEY_3"

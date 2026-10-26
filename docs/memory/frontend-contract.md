@@ -102,6 +102,12 @@ sempre**, porque ela não tem uma unidade associada.
   lógica de escala é opcional para v1, mas documentado aqui para v2.
 - Header/footer: texto uppercase, `letter-spacing: .12em`, borda sutil
   separando do banner (`1px solid #ffffff1f`).
+- Avisos do controle remoto (sem equivalente no site): ocupam
+  temporariamente o lugar do footer, mesmas cores dele — volume
+  (`DrawVolumeOsd`) e avisos de duas linhas + barra de progresso fina
+  no pé (`DrawNoticeOsd`: "RESET DO PEC EM 7 s", "MODO QUIOSQUE",
+  "REINICIANDO EM 3 s", "PAINEL RESETADO"). Nunca no banner: a janela
+  do mpv o cobre durante vídeos.
 - Mídia (vídeo/imagem) sempre `object-fit: contain` — nunca cortar,
   sempre "letterbox" com o fundo `#06121f`.
 

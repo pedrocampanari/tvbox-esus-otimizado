@@ -1,5 +1,57 @@
 # Handoff de sessão
 
+## Sessão de 2026-10-26 (parte 27) — SSH no IP novo, controle remoto igual ao manual (testado no aparelho)
+
+**Acesso**: o box agora é `root@192.168.101.213` (cabo, `end0`, DHCP);
+chaves de host idênticas às do antigo `.196`. As chaves do PC do usuário
+foram instaladas (`ssh-copy-id`), login sem senha. O `!` do Claude Code
+abre o askpass do KDE pra senha: rodar `ssh-copy-id` num terminal comum
+ou com `SSH_ASKPASS_REQUIRE=never`.
+
+O aparelho ainda estava na parte 25 (nada da 26). Conferi md5 dos
+arquivos que ele tinha alterados (= locais), `find -size 0` e `git fsck`
+limpos, copiei a árvore por tar, `make` no aparelho, `install.sh`.
+Feito ([[known-issues]] item -13): scancodes de HOME/1/2/3 capturados,
+botões remapeados conforme a seção 7 do manual (1 = `panel-ctl.sh kiosk`,
+2 = recarrega o Display, 3 segurado 10 s = reset do PEC, MUTE vira toque
+simples), Xorg passa a ignorar o receptor IR, logind deixa de desligar
+no POWER curto. Tudo testado com o controle físico pelo usuário.
+
+**Efeito colateral**: no teste o 3 foi segurado 10 s e o reset rodou de
+verdade — **o painel precisa ser pareado de novo no e-SUS**. Avisado ao
+usuário.
+
+Armadilhas: o `kiosk.log` tem bytes nulos depois de quedas de energia
+(item -12) — usar `grep -a`. O journal do Armbian fica em RAM e o box não
+tem RTC: o boot anterior não deixa log, as horas pulam entre boots.
+Rodar `install.sh` com `nohup` no aparelho (uma sessão SSH caída no meio
+não pode matar a instalação).
+
+Estado: partes 26-27 commitadas juntas; o aparelho roda esta versão (o git dele continua em `e06d59a` + arquivos copiados por tar).
+
+---
+
+## Sessão de 2026-10-23 (parte 26) — manual da BTV11: controle, volume, rede, reset do painel
+
+O usuário subiu `docs/files/Manual-eSUSTV_BTV11_Pré-Validação.pdf`
+(incompleto, 8 de 20 seções) e pediu os itens: POWER, volume 60%,
+recuperação de rede, recarregar Display, reset de cookies, HOME.
+Feito ([[known-issues]] item -13): `RemoteControl::Poll` com botões de
+segurar (MUTE/POWER/HOME), `DrawNoticeOsd` no rodapé, `panel-ctl.sh`
+(reload/reset), watchdog de rede + reset do perfil no exec.sh, POWER
+segurado → reboot via `tvbox-power-hold` (triggerhappy), keymap movido
+para `config/rc-rk322x-tvbox.toml`, volume de boot 60% sem `alsactl
+store`. Compilado sem erro; scripts testados no PC (hold curto/longo,
+TERM/KILL do panel-ctl, HEAD no painel = 401 = no ar).
+
+**Nada disso rodou no RK3229** (só na parte 27, no `.213`):
+`192.168.101.196` sem rota nesta sessão. Próximo passo no aparelho: `git pull && ./install.sh && make`,
+conferir repetição do MUTE/POWER segurados no `ir-keytable -t`,
+capturar o HOME, testar os 3 fluxos de segurar e um `reset` real.
+Lembrar do item -12: `sync` antes de tirar da tomada.
+
+---
+
 ## Sessão de 2026-09-30 (parte 25) — "tela preta ao final da execução"
 
 Investigado no dispositivo com uma sonda Python no socket IPC do mpv

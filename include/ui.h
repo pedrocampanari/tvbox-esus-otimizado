@@ -52,6 +52,13 @@ void DrawLoadingSlide(Rectangle area, const Campaign &campaign, float elapsedSec
 // tempo.
 void DrawVolumeOsd(Rectangle area, int percent, bool muted, Color background, Color foreground);
 
+// Aviso de duas linhas no lugar do rodape (mesma regra do DrawVolumeOsd):
+// usado pelo feedback dos botoes de segurar ("SOLTE PARA RECARREGAR...")
+// e por avisos curtos ("PAINEL RESETADO"). `progress` em 0..1 desenha
+// uma barra fina no pe da area; negativo = sem barra.
+void DrawNoticeOsd(Rectangle area, const char *title, const char *subtitle, float progress,
+                   Color background, Color foreground);
+
 } // namespace kiosk
 
 #endif // TVBOX_UI_H
