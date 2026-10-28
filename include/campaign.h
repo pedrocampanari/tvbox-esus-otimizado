@@ -24,6 +24,23 @@ struct Campaign {
     int ordem = 0;
 };
 
+// Cabeçalho/rodapé do display (configuracoes_tv.cabecalho_rodape_tv no
+// site). Cores como no banco ("#rrggbb"); o app converte ao desenhar.
+// Os padrões são os da instância real (config.h), usados até a primeira
+// consulta ao site dar certo.
+struct TvChrome {
+    bool headerVisible = true;
+    std::string headerTitle;
+    std::string headerSubtitle;
+    std::string headerBackground;
+    std::string headerForeground;
+    bool footerVisible = true;
+    std::string footerTitle;
+    std::string footerSubtitle;
+    std::string footerBackground;
+    std::string footerForeground;
+};
+
 } // namespace kiosk
 
 #endif // TVBOX_CAMPAIGN_H

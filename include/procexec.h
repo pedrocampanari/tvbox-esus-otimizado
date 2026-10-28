@@ -8,7 +8,7 @@
 namespace kiosk {
 
 // Executa um binário (sem shell, argv explícito) e captura seu stdout.
-// Usado para `curl` (scraper), `amixer` (volume) e `yt-dlp` (cache de
+// Usado para `curl` (campanhas do site), `amixer` (volume) e `yt-dlp` (cache de
 // vídeos) sem linkar libcurl/libasound ou qualquer SDK das plataformas
 // de vídeo — só processos pontuais.
 // Retorna false se o processo não pôde ser criado, saiu com código

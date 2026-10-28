@@ -14,6 +14,28 @@ usuário final recebe.
 - Rotas relevantes: `/display` (visão geral) e `/display/$unidadeSlug`,
   `/tv/$unidadeSlug` (por unidade de saúde).
 
+## Fonte ao vivo (o que o app replica, lido do bundle em 2026-10-28)
+Backend: `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` no `supabase-*.js`
+(listado em `<link rel="modulepreload">` do `/display`). Consultas do
+`/display` (geral) e `/display/<slug>`, refeitas a cada 30 s pelo site:
+- `campanhas?select=*&ativo=eq.true&order=ordem.asc,created_at.asc`,
+  depois filtro no cliente: fora de `data_inicio`/`data_fim` sai.
+- `configuracoes_tv?chave=eq.fallback_tv` → `valor.mensagens[]`
+  (textos "padrão": `titulo` obrigatório, `ativo` default true).
+- Com slug: `unidades?slug=eq.<slug>` → id; mantém campanhas com
+  `exibir_em_todas` ou ligadas em `campanhas_unidades`. Slug sem unidade
+  = lista geral.
+- Lista final: padrão (ordem = índice) e depois campanhas, cada grupo
+  ordenado por `ordem` e então `id` (`campanha:<uuid>`). Vazia = item
+  técnico "Aguardando informações".
+- `configuracoes_tv?chave=eq.cabecalho_rodape_tv` → textos/cores de
+  header e footer (o app lê junto com `fallback_tv`, numa consulta só).
+  Padrões do site (`Z` no bundle) para campo ausente: cabeçalho
+  "Secretaria Municipal de Saúde", rodapé "Três Lagoas/MS", subtextos
+  vazios, visíveis, cores `#0d47a1`/`#ffffff`; `*_cor_*` vazio herda
+  `cor_fundo`/`cor_texto`. Barra só aparece com `*_visivel` e texto.
+- `tema_tv` (`{"escala": ...}`) — o app ainda não lê.
+
 ## Modelo de conteúdo (campanha)
 Cada item exibido no painel é um objeto com este formato (nomes em
 português, como usados no app):

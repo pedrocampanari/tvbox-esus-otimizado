@@ -803,7 +803,27 @@ ajustar `--hwdec` do mpv também (ver item 5) se o driver Mali usado for
 diferente do esperado (Panfrost vs. driver proprietário ARM, por
 exemplo).
 
-## 1. Modo atual: lista fixa de vídeos — RESOLVIDO (10/10) em 2026-09-26
+## 1. Fonte das campanhas: do site, a cada 5 min — SUBSTITUÍDO em 2026-10-28 (testado no `.204`)
+**Atual**: o dono do sistema autorizou (2026-10-28) ler o backend do site
+direto (Supabase, chave pública `sb_publishable_…` que o site entrega a
+todo navegador). `LiveCampaignSource` ([[architecture]]) refaz a mesma
+consulta do `/display` a cada 5 min; trocou no site, troca no TV box. A
+chave não fica no repositório: é lida do bundle `supabase-*.js` do site
+(a chave aparece 2 vezes no bundle: pegar só a primeira).
+Testado no `.204`: 10 campanhas, mesma ordem e mesmas URLs da lista
+fixa abaixo (confirma que a ordem do site é `ordem` e depois id), cache
+reaproveitado, RSS do app 55 MB. **Não testado**: uma troca real feita
+no site chegando ao aparelho, e boot sem rede com
+`cache/campaigns-live.conf`. Relógio sem RTC: antes de 2025 o filtro de
+`data_inicio`/`data_fim` é ignorado. Cabeçalho/rodapé também vêm do
+site (`cabecalho_rodape_tv`, mesma consulta, gravados em
+`cache/tv-chrome-live.conf`; título em maiúsculas como o CSS do site,
+barra oculta/sem texto some e o banner cresce; o rodapé volta só para os
+avisos do controle). Testado no `.204` com os valores atuais (iguais aos
+antigos fixos); barra oculta e cores novas sem teste real. O histórico
+abaixo é de quando a lista era fixa.
+
+### Histórico: lista fixa de vídeos (2026-09-26)
 O dono do sistema autorizou usar uma lista FIXA de links de vídeo por
 enquanto, em vez de ficar buscando `esustv.jfbatl.com.br/display` o
 tempo todo. Mudanças feitas:
@@ -843,7 +863,7 @@ tempo todo. Mudanças feitas:
 - Formato completo do arquivo de config está documentado no cabeçalho de
   `config/campaigns.conf` (comentários) e em [[architecture]].
 
-## 2. O scraper HTTP puro não vê conteúdo real (relevante só se kUseLiveScraping voltar a true)
+## 2. O scraper HTTP puro não vê conteúdo real — OBSOLETO em 2026-10-28 (scraper removido; ver item 1)
 **Confirmado em 2026-09-26** com `curl` direto em
 `https://esustv.jfbatl.com.br/display`: o HTML retornado contém só o
 estado técnico de fallback ("Aguardando informações"). O conteúdo real

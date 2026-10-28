@@ -234,6 +234,12 @@ std::string VideoCache::PickNextLocked(double now, double &outWaitSeconds,
 
 void VideoCache::WorkerLoop() {
     bool warnedLowDisk = false;
+    // Falhas seguidas em vídeos DIFERENTES = o YouTube (ou a rede) está
+    // recusando tudo: pausa a fila inteira, em vez de passar pro próximo
+    // vídeo na hora (rajadas de ~5 tentativas/min vistas em 2026-10-28,
+    // o que só piora um bloqueio do YouTube). Backoff por vídeo continua.
+    int failStreak = 0;
+    double pausedUntil = 0;
     while (!stop_.load()) {
         std::string key;
         std::string url;
@@ -241,6 +247,12 @@ void VideoCache::WorkerLoop() {
         bool analyzeOnly = false;
         {
             std::unique_lock<std::mutex> lock(mutex_);
+            double pauseLeft = pausedUntil - MonotonicSeconds();
+            if (pauseLeft > 0) {
+                wake_.wait_for(lock, std::chrono::duration<double>(pauseLeft),
+                               [this] { return stop_.load(); });
+                continue;
+            }
             double wait = 0;
             key = PickNextLocked(MonotonicSeconds(), wait, analyzeOnly);
             if (key.empty()) {
@@ -287,7 +299,8 @@ void VideoCache::WorkerLoop() {
         Log("baixando %s", url);
         std::string fileName;
         long long bytes = 0;
-        bool ok = DownloadOne(key, url, fileName, bytes);
+        std::string error;
+        bool ok = DownloadOne(key, url, fileName, bytes, error);
         if (stop_.load()) break;
         double playEnd = ok ? MeasurePlayEnd(cacheDir_ + "/" + fileName) : 0.0;
         if (stop_.load()) break;
@@ -314,6 +327,7 @@ void VideoCache::WorkerLoop() {
             e.playEnd = playEnd;
             e.failures = 0;
             e.nextAttemptAt = 0;
+            failStreak = 0;
             SaveManifestLocked();
             Log("pronto: %s (%s)", url,
                 std::to_string(bytes) + " bytes" +
@@ -325,14 +339,21 @@ void VideoCache::WorkerLoop() {
             // virar um loop de yt-dlp consumindo CPU sem parar.
             double backoff = std::min(600.0, 30.0 * (1 << std::min(e.failures - 1, 5)));
             e.nextAttemptAt = MonotonicSeconds() + backoff;
-            Log("falha ao baixar %s (tentando de novo em %ss)", url,
-                std::to_string(static_cast<int>(backoff)));
+            std::string retry = "tentando de novo em " + std::to_string(static_cast<int>(backoff)) + "s";
+            Log("falha ao baixar %s (%s)", url,
+                retry + (error.empty() ? "" : "; " + error.substr(0, 300)));
+            if (++failStreak >= 2) {
+                double pause = std::min(600.0, 60.0 * (1 << std::min(failStreak - 2, 4)));
+                pausedUntil = MonotonicSeconds() + pause;
+                Log("%s falhas seguidas; fila de downloads pausada por %ss", std::to_string(failStreak),
+                    std::to_string(static_cast<int>(pause)));
+            }
         }
     }
 }
 
 bool VideoCache::DownloadOne(const std::string &key, const std::string &url,
-                             std::string &outFileName, long long &outBytes) {
+                             std::string &outFileName, long long &outBytes, std::string &outError) {
     const std::string partialBase = cacheDir_ + "/" + kPartialPrefix + key;
 
     std::vector<std::string> argv;
@@ -356,14 +377,16 @@ bool VideoCache::DownloadOne(const std::string &key, const std::string &url,
         url,
     });
 
+    // stderr junto: sem ele a falha chegava no log sem motivo nenhum.
     std::string out;
-    bool ok = RunCaptureStdout(argv, kVideoDownloadTimeoutSeconds, out, &stop_);
+    bool ok = RunCaptureStdout(argv, kVideoDownloadTimeoutSeconds, out, &stop_, true);
 
     std::string printed;
     std::istringstream lines(out);
     for (std::string line; std::getline(lines, line);) {
         line = Trim(line);
-        if (!line.empty()) printed = line;
+        if (line.rfind("ERROR:", 0) == 0) outError = line;
+        else if (line.find("/" + std::string(kPartialPrefix)) != std::string::npos) printed = line;
     }
 
     std::string downloadedName = Basename(printed);

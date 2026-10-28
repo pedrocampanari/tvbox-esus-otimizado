@@ -9,6 +9,8 @@
 #include <cmath>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -17,13 +19,13 @@
 #include "raylib.h"
 
 #include "campaign.h"
+#include "campaign_source.h"
 #include "campaign_store.h"
 #include "config.h"
 #include "native_window.h"
 #include "player.h"
 #include "procexec.h"
 #include "remote_control.h"
-#include "scraper.h"
 #include "setup_menu.h"
 #include "ui.h"
 #include "video_cache.h"
@@ -34,9 +36,13 @@ namespace {
 
 std::mutex g_campaignsMutex;
 std::vector<Campaign> g_campaigns;
+TvChrome g_tvChrome; // cabeçalho/rodapé; mesmo mutex e geração da lista
 // Incrementado a cada troca de g_campaigns: o loop principal só copia a
 // lista quando ela muda de fato, não a cada frame.
 std::atomic<unsigned> g_campaignsGeneration{0};
+// Pede uma consulta já, sem esperar o intervalo (menu fechou: o slug da
+// UBS pode ter mudado).
+std::atomic<bool> g_campaignsRefreshNow{false};
 std::atomic<bool> g_running{true};
 
 Campaign DefaultWaitingCampaign() {
@@ -49,16 +55,116 @@ Campaign DefaultWaitingCampaign() {
     return c;
 }
 
-void ScraperThreadLoop(const std::string &displayUrl) {
-    DisplayScraper scraper(displayUrl);
-    while (g_running.load()) {
-        std::vector<Campaign> fetched;
-        if (scraper.Refresh(fetched) && !fetched.empty()) {
-            std::lock_guard<std::mutex> lock(g_campaignsMutex);
-            g_campaigns = std::move(fetched);
-            g_campaignsGeneration.fetch_add(1);
+TvChrome DefaultTvChrome() {
+    TvChrome chrome;
+    chrome.headerTitle = kHeaderTitle;
+    chrome.headerSubtitle = kHeaderSubtitle;
+    chrome.headerBackground = "#0d47a1";
+    chrome.headerForeground = "#ffffff";
+    chrome.footerTitle = kFooterTitle;
+    chrome.footerSubtitle = kFooterSubtitle;
+    chrome.footerBackground = "#f41515";
+    chrome.footerForeground = "#ffffff";
+    return chrome;
+}
+
+// "#rgb", "#rrggbb" ou "#rrggbbaa" (como o CSS do site aceita); outra
+// coisa cai em `fallback`.
+Color ParseCssColor(const std::string &css, Color fallback) {
+    if (css.empty() || css[0] != '#') return fallback;
+    std::string hex = css.substr(1);
+    if (hex.size() == 3) hex = {hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]};
+    if (hex.size() != 6 && hex.size() != 8) return fallback;
+    if (hex.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) return fallback;
+    unsigned long v = std::strtoul(hex.c_str(), nullptr, 16);
+    if (hex.size() == 6) v = (v << 8) | 0xff;
+    return {static_cast<unsigned char>(v >> 24), static_cast<unsigned char>(v >> 16),
+            static_cast<unsigned char>(v >> 8), static_cast<unsigned char>(v)};
+}
+
+// text-transform: uppercase do .tv-chrome-text, só ASCII + Latin-1 (os
+// acentos de PT-BR, que é o que a fonte carrega).
+std::string UpperPtBr(const std::string &s) {
+    std::string out = s;
+    for (size_t i = 0; i < out.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(out[i]);
+        if (c >= 'a' && c <= 'z') {
+            out[i] = static_cast<char>(c - 32);
+        } else if (c == 0xC3 && i + 1 < out.size()) {
+            // U+00E0..U+00FE (exceto ÷) -> U+00C0..U+00DE: 2º byte 0xA0..0xBE -> 0x80..0x9E.
+            unsigned char next = static_cast<unsigned char>(out[i + 1]);
+            if (next >= 0xA0 && next <= 0xBE && next != 0xB7) out[i + 1] = static_cast<char>(next - 0x20);
+            ++i;
         }
-        for (int waited = 0; waited < kScrapePollIntervalSeconds && g_running.load(); ++waited) {
+    }
+    return out;
+}
+
+// Barra do cabeçalho/rodapé pronta pra desenhar.
+struct ChromeBar {
+    bool visible = false;
+    std::string title;
+    std::string subtitle;
+    Color background{};
+    Color foreground{};
+};
+
+ChromeBar MakeChromeBar(bool visible, const std::string &title, const std::string &subtitle,
+                        const std::string &background, const std::string &foreground,
+                        Color defaultBackground) {
+    ChromeBar bar;
+    bar.visible = visible && !title.empty(); // o site esconde a barra sem texto
+    bar.title = UpperPtBr(title);
+    bar.subtitle = subtitle;
+    bar.background = ParseCssColor(background, defaultBackground);
+    bar.foreground = ParseCssColor(foreground, kColorChromeText);
+    return bar;
+}
+
+// Consulta o backend do site e troca a lista quando ela muda de fato
+// (`lastText` = lista atual serializada). Falha de rede mantém a lista.
+void CampaignsThreadLoop(std::string lastText, std::string lastChromeText) {
+    LiveCampaignSource source(kDisplayUrl);
+    bool everFetched = false;
+    while (g_running.load()) {
+        BtvConfig btv;
+        LoadBtvConfig(kBtvConfigPath, btv);
+        std::vector<Campaign> fetched;
+        TvChrome chrome;
+        bool ok = source.Fetch(btv.ubsSlug, fetched, chrome);
+        if (ok) {
+            everFetched = true;
+            std::string text = SerializeCampaigns(fetched);
+            std::string chromeText = SerializeTvChrome(chrome);
+            bool listChanged = text != lastText;
+            bool chromeChanged = chromeText != lastChromeText;
+            if (listChanged) {
+                TraceLog(LOG_WARNING, "Campanhas: lista nova do site (%d itens, ubs='%s')",
+                         static_cast<int>(fetched.size()), btv.ubsSlug.c_str());
+                if (!SaveTextFileAtomic(kLiveCampaignsCachePath,
+                                        "# Gerado pelo app: ultima lista recebida do site (ver\n"
+                                        "# include/campaign_source.h). Usada no boot.\n\n" + text)) {
+                    TraceLog(LOG_WARNING, "Campanhas: nao foi possivel gravar %s", kLiveCampaignsCachePath);
+                }
+                lastText = std::move(text);
+            }
+            if (chromeChanged) {
+                TraceLog(LOG_WARNING, "Campanhas: cabecalho/rodape novos do site");
+                if (!SaveTextFileAtomic(kLiveTvChromeCachePath, chromeText)) {
+                    TraceLog(LOG_WARNING, "Campanhas: nao foi possivel gravar %s", kLiveTvChromeCachePath);
+                }
+                lastChromeText = std::move(chromeText);
+            }
+            if (listChanged || chromeChanged) {
+                std::lock_guard<std::mutex> lock(g_campaignsMutex);
+                if (listChanged) g_campaigns = std::move(fetched);
+                if (chromeChanged) g_tvChrome = std::move(chrome);
+                g_campaignsGeneration.fetch_add(1);
+            }
+        }
+        int wait = everFetched ? kCampaignsPollIntervalSeconds : kCampaignsRetryIntervalSeconds;
+        for (int waited = 0; waited < wait && g_running.load(); ++waited) {
+            if (g_campaignsRefreshNow.exchange(false)) break;
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }
@@ -196,21 +302,32 @@ int main() {
 
     LoadUiFonts();
 
-    std::thread scraperThread;
-    if (kUseLiveScraping) {
-        scraperThread = std::thread(ScraperThreadLoop, std::string(kDisplayUrl));
-    } else {
-        // Modo padrão (ver include/config.h): lista fixa, carregada uma
-        // única vez — sem ficar buscando a URL original o tempo todo.
-        std::vector<Campaign> fixed = LoadFixedCampaigns(kFixedCampaignsConfigPath);
+    // Lista inicial: a última recebida do site (boot sem rede segue com
+    // ela) ou, antes da primeira consulta, a lista fixa. Ver config.h.
+    bool haveLiveCache = kUseLiveCampaigns && std::ifstream(kLiveCampaignsCachePath).good();
+    std::vector<Campaign> initial =
+        LoadFixedCampaigns(haveLiveCache ? kLiveCampaignsCachePath : kFixedCampaignsConfigPath);
+    std::string initialText = SerializeCampaigns(initial);
+    TvChrome initialChrome = DefaultTvChrome();
+    if (kUseLiveCampaigns) LoadTvChrome(kLiveTvChromeCachePath, initialChrome);
+    std::string initialChromeText = SerializeTvChrome(initialChrome);
+    {
         std::lock_guard<std::mutex> lock(g_campaignsMutex);
-        g_campaigns = std::move(fixed);
+        g_campaigns = std::move(initial);
+        g_tvChrome = std::move(initialChrome);
         g_campaignsGeneration.fetch_add(1);
     }
 
     // Cache local dos vídeos (ver include/video_cache.h): baixa em
-    // segundo plano, um por vez, sempre o próximo da rotação.
+    // segundo plano, um por vez, sempre o próximo da rotação. Antes da
+    // thread de campanhas: é ele que cria cache/.
     VideoCache videoCache(kVideoCacheDir);
+
+    std::thread campaignsThread;
+    if (kUseLiveCampaigns) {
+        campaignsThread =
+            std::thread(CampaignsThreadLoop, std::move(initialText), std::move(initialChromeText));
+    }
 
     unsigned long nativeWindowId = GetNativeX11WindowId(GetWindowHandle());
     if (nativeWindowId == 0) {
@@ -266,6 +383,8 @@ int main() {
 
     std::vector<Campaign> snapshot;
     unsigned snapshotGeneration = ~0u;
+    ChromeBar headerBar;
+    ChromeBar footerBar;
 
     while (g_running.load() && !WindowShouldClose()) {
         RemoteInput remoteInput = remote.Poll(GetTime());
@@ -287,6 +406,7 @@ int main() {
                 SetWindowSize(windowW, windowH);
                 SetWindowPosition(windowX, 0);
                 startSlide = true;
+                g_campaignsRefreshNow.store(true);
                 std::string title;
                 std::string subtitle;
                 if (setupMenu.TakeClosedNotice(title, subtitle)) {
@@ -316,9 +436,18 @@ int main() {
                 std::lock_guard<std::mutex> lock(g_campaignsMutex);
                 snapshot = g_campaigns;
                 snapshotGeneration = g_campaignsGeneration.load();
+                const TvChrome &c = g_tvChrome;
+                headerBar = MakeChromeBar(c.headerVisible, c.headerTitle, c.headerSubtitle,
+                                          c.headerBackground, c.headerForeground, kColorHeaderBackground);
+                footerBar = MakeChromeBar(c.footerVisible, c.footerTitle, c.footerSubtitle,
+                                          c.footerBackground, c.footerForeground, kColorFooterBackground);
             }
             if (snapshot.empty()) snapshot.push_back(DefaultWaitingCampaign());
             videoCache.SetCampaigns(snapshot);
+            // Lista nova do site: o slide na tela continua se ainda existe.
+            for (size_t i = 0; i < snapshot.size(); ++i) {
+                if (snapshot[i].id == activeId) currentIndex = i;
+            }
         }
         currentIndex %= snapshot.size();
 
@@ -468,8 +597,12 @@ int main() {
 
         int screenW = GetScreenWidth();
         int screenH = GetScreenHeight();
-        float headerHeight = std::clamp(screenH * 0.08f, 32.0f, 90.0f);
-        float footerHeight = std::clamp(screenH * 0.08f, 32.0f, 90.0f);
+        // Barra escondida no site = banner maior. O rodapé volta só
+        // enquanto um aviso do controle (volume, segurar) precisa dele.
+        float barHeight = std::clamp(screenH * 0.08f, 32.0f, 90.0f);
+        bool footerInUse = footerBar.visible || showHoldOsd || showNoticeOsd || showVolumeOsd;
+        float headerHeight = headerBar.visible ? barHeight : 0.0f;
+        float footerHeight = footerInUse ? barHeight : 0.0f;
         Rectangle headerRect = {0, 0, static_cast<float>(screenW), headerHeight};
         Rectangle footerRect = {0, screenH - footerHeight, static_cast<float>(screenW), footerHeight};
         Rectangle bannerRect = {0, headerHeight, static_cast<float>(screenW),
@@ -486,18 +619,20 @@ int main() {
 
         BeginDrawing();
         ClearBackground(kColorAppBackground);
-        DrawChromeBar(headerRect, kHeaderTitle, kHeaderSubtitle, kColorHeaderBackground,
-                      kColorChromeText);
+        if (headerBar.visible) {
+            DrawChromeBar(headerRect, headerBar.title.c_str(), headerBar.subtitle.c_str(),
+                          headerBar.background, headerBar.foreground);
+        }
         if (showHoldOsd || showNoticeOsd) {
             const NoticeText &n = showHoldOsd ? holdNotice : notice;
             DrawNoticeOsd(footerRect, n.title.c_str(), n.subtitle.c_str(), n.progress,
-                          kColorFooterBackground, kColorChromeText);
+                          footerBar.background, footerBar.foreground);
         } else if (showVolumeOsd) {
-            DrawVolumeOsd(footerRect, volumeOsdPercent, volumeOsdMuted, kColorFooterBackground,
-                          kColorChromeText);
-        } else {
-            DrawChromeBar(footerRect, kFooterTitle, kFooterSubtitle, kColorFooterBackground,
-                          kColorChromeText);
+            DrawVolumeOsd(footerRect, volumeOsdPercent, volumeOsdMuted, footerBar.background,
+                          footerBar.foreground);
+        } else if (footerBar.visible) {
+            DrawChromeBar(footerRect, footerBar.title.c_str(), footerBar.subtitle.c_str(),
+                          footerBar.background, footerBar.foreground);
         }
 
         switch (activeType) {
@@ -519,7 +654,7 @@ int main() {
     }
 
     g_running.store(false);
-    if (scraperThread.joinable()) scraperThread.join();
+    if (campaignsThread.joinable()) campaignsThread.join();
 
     if (imageTexture.id != 0) UnloadTexture(imageTexture);
     player.Shutdown();

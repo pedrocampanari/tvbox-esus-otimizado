@@ -38,7 +38,7 @@ find_package(Threads REQUIRED)
 
 add_executable(${PROJECT_NAME}
   apps/tvbox_esus_app.cpp
-  src/scraper.cpp
+  src/campaign_source.cpp
   src/player.cpp
   src/ui.cpp
   src/procexec.cpp

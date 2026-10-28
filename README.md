@@ -26,8 +26,8 @@ Nesta ordem:
 ```
 apps/tvbox_esus_app.cpp   # entrypoint único (main + loop do kiosk)
 include/                  # headers dos módulos
-src/                      # implementação dos módulos (scraper, player, video_cache, ui, remote_control, setup_menu, procexec, campaign_store)
-config/campaigns.conf     # lista FIXA de vídeos/campanhas (fonte de conteúdo padrão, ver known-issues)
+src/                      # implementação dos módulos (campaign_source, player, video_cache, ui, remote_control, setup_menu, procexec, campaign_store)
+config/campaigns.conf     # lista fixa de 2026-09-26: só vale até a 1ª consulta ao site dar certo
 config/rc-rk322x-tvbox.toml # keymap do controle remoto IR (install.sh instala)
 config/panel-extension/   # extensão do Chromium: clica "Iniciar painel de chamadas" do PEC
 panel-ctl.sh              # reload/reset/kiosk do Chromium do painel
@@ -158,8 +158,9 @@ senha), unidade de saúde por slug ou "Entrar sem vincular a uma UBS", e
 o kiosk. Navega pelo controle ou pelo teclado USB (setas/ENTER/ESC);
 senha nova e slug só pelo teclado USB (sem teclado virtual, como no
 manual). O Wi-Fi é gravado no netplan (`/etc/netplan/90-tvbox-wifi.yaml`,
-redes salvas em `/etc/tvbox/wifi-networks.json`). O slug só fica
-gravado: o conteúdo ainda vem da lista fixa. Na mão, via SSH:
+redes salvas em `/etc/tvbox/wifi-networks.json`). Com slug, o app
+mostra as campanhas daquela unidade (como `/display/<slug>` do site);
+slug que não existe no servidor cai na lista geral. Na mão, via SSH:
 `./net-ctl.py status|scan|test URL`.
 
 Logs ficam na raiz do projeto: `kiosk.log` (app de vídeo, inclui as
@@ -198,9 +199,11 @@ O app compila, abre a janela no tamanho/posição corretos (canto
 superior direito, 25% largura x 100% altura) e desenha o "chrome"
 (header azul/footer vermelho, cada um com título+subtítulo) com a
 paleta e tipografia (Liberation Sans) confirmadas ao vivo no site
-original. O conteúdo é uma lista **fixa** de campanhas
-(`config/campaigns.conf`), por autorização do dono do sistema — sem
-scraping em runtime. Os 10 `video_url` reais já estão preenchidos.
+original. As campanhas vêm do backend do próprio site (Supabase, a
+mesma consulta que o `/display` faz), checadas a cada 5 minutos:
+trocou um vídeo no site, o TV box troca sozinho (autorizado pelo dono
+do sistema em 2026-10-28; ver known-issues item 1). A última lista
+recebida fica em `cache/campaigns-live.conf` para bootar sem rede.
 Os vídeos são **baixados em disco** (`cache/videos/`, uma vez por boot
 do dispositivo, em segundo plano, sempre o próximo da rotação) e
 tocados pelo `mpv` embutido como janela filha; cada vídeo é exibido

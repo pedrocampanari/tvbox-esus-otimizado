@@ -83,8 +83,9 @@ private:
     };
 
     void WorkerLoop();
+    // `outError`: última linha "ERROR:" do yt-dlp (vai pro log), se houver.
     bool DownloadOne(const std::string &key, const std::string &url, std::string &outFileName,
-                     long long &outBytes);
+                     long long &outBytes, std::string &outError);
     // Próxima chave a processar (ou vazia), em ordem de rotação a partir
     // do slide atual: baixar (não fresca neste boot) ou só analisar o
     // preto final (`outAnalyzeOnly`, arquivo já em disco). Chamar com

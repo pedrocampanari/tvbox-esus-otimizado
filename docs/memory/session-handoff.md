@@ -1,5 +1,43 @@
 # Handoff de sessão
 
+## Sessão de 2026-10-28 (parte 33) — cabeçalho/rodapé do site; falhas do yt-dlp
+
+Pedido: "corrija os bugs que estão fora do escopo" (os dois itens citados
+na parte 32).
+- Cabeçalho/rodapé vêm do site (`TvChrome`, [[known-issues]] item 1,
+  [[frontend-contract]] > "Fonte ao vivo"). Testado no `.204`: valores
+  atuais, "TRÊS LAGOAS/MS" com Ê maiúsculo. Barra oculta/cores novas sem
+  teste real.
+- Falhas do yt-dlp: causa **não encontrada ainda**. Uma execução manual
+  no `.204` (verbose) deu certo; o padrão no log são rajadas de falhas
+  de ~11 s, logo depois de reinícios do app e também no meio do uso. Feito:
+  o stderr do yt-dlp entra no log da falha (linha `ERROR:`) e, com 2
+  falhas seguidas, a fila inteira pausa 1…10 min ([[architecture]] >
+  "Cache de vídeos"). Próximo passo: ler o motivo da próxima falha no
+  `kiosk.log` (`grep -a "falha ao baixar"`).
+
+---
+
+## Sessão de 2026-10-28 (parte 32) — campanhas direto do site, a cada 5 min
+
+Usuário (dono do sistema) autorizou ler o Supabase do site com a chave
+pública. Feito ([[known-issues]] item 1, [[architecture]],
+[[frontend-contract]] > "Fonte ao vivo"): `campaign_source.{h,cpp}` no
+lugar do `scraper` (removido), `CampaignsThreadLoop` no app,
+`SerializeCampaigns`/`SaveCampaignsText` no `campaign_store`,
+`cache/campaigns-live.conf`. Testes no PC: consulta real geral, slug
+inexistente e `vila-haro` (única unidade; 0 vínculos, as 10 são
+`exibir_em_todas`), datas/fusos/escapes JSON, ASan+UBSan limpos. No
+`.204`: arquivos por tar (md5 ok), `make` sem warning (binário −32 KB
+sem `std::regex`), app reiniciado, "lista nova do site (10 itens)", cache
+reaproveitado, vídeo tocando. Falta: troca real no site chegando ao
+aparelho; boot sem rede usando a lista gravada.
+
+Observado (já acontecia antes): várias falhas `yt-dlp` no download do
+cache hoje (49 até 14h); o retry acaba baixando.
+
+---
+
 ## Sessão de 2026-10-28 (parte 31) — clique automático no "Iniciar painel de chamadas"
 
 Extensão `config/panel-extension/` + flags no `exec.sh` ([[known-issues]]

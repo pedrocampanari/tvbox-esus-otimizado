@@ -48,7 +48,8 @@ problema real no hardware (ver [[known-issues]]).
 
 ## Módulos (`include/` + `src/` + `apps/`)
 - `apps/tvbox_esus_app.cpp` — único ponto de entrada. Loop principal,
-  orquestra scraper → estado de slideshow → UI/player.
+  orquestra campanhas (thread `CampaignsThreadLoop`) → estado de
+  slideshow → UI/player.
 - `include/campaign.h` — struct `Campaign` + enums `CampaignType`,
   `VideoOrigin` (espelham o modelo de dados do [[frontend-contract]]).
 - `include/config.h` — constantes de configuração: fração da janela
@@ -63,26 +64,27 @@ problema real no hardware (ver [[known-issues]]).
   `kYtdlFormatSelector`; `config.h` inclui este header também, então
   código que só conhece `config.h` continua enxergando essas constantes
   normalmente.
-- `include/campaign_store.h` / `src/campaign_store.cpp` — **fonte de
-  conteúdo padrão (v1)**: lê `config/campaigns.conf` (formato
-  chave=valor simples, documentado no cabeçalho do próprio arquivo) uma
-  única vez na inicialização e monta a lista de `Campaign`. Autorizado
-  pelo dono do sistema em 2026-09-26 usar uma lista FIXA de vídeos por
-  enquanto, então **não há nenhuma requisição de rede em runtime** nesse
-  modo — ver [[known-issues]] item 1 para o porquê e para o estado de
-  preenchimento do arquivo (títulos reais confirmados, `video_url`
-  ainda pendente).
-- `include/scraper.h` / `src/scraper.cpp` — busca e interpreta o HTML da
-  página `/display` procurando vídeos/imagens (requisito explícito do
-  projeto: nada de iframe, o app tem que "sair procurando" a mídia).
-  **Não usado por padrão** (`kUseLiveScraping = false` em
-  `include/config.h`) desde que a lista fixa foi autorizada — o código
-  fica pronto pra religar se essa decisão mudar. Limitação conhecida e
-  documentada em [[known-issues]]: a página real renderiza o conteúdo
-  client-side depois de buscar dados num backend; o HTML puro (o que
-  `curl` vê) só contém o placeholder "Aguardando informações". Um
-  scraper puramente HTTP não vai encontrar vídeos reais até essa lacuna
-  ser resolvida (ver known-issues para as opções cogitadas).
+- `include/campaign_source.h` / `src/campaign_source.cpp` — **fonte de
+  conteúdo** (desde 2026-10-28): `LiveCampaignSource::Fetch` consulta a
+  API REST do Supabase do site com as mesmas regras do `/display`
+  ([[frontend-contract]] > "Fonte ao vivo"), via processo `curl`, com um
+  parser JSON mínimo próprio (sem `std::regex`, sem biblioteca). URL e
+  chave pública são lidas do bundle `supabase-*.js` do site na primeira
+  consulta e de novo em HTTP 401/403 — nada de chave no repositório.
+  URLs do YouTube normalizadas para `watch?v=<id>` (mesma chave de cache
+  da lista fixa: a troca de fonte não baixou nada de novo).
+  `CampaignsThreadLoop` (no app) consulta a cada 5 min (30 s até a
+  primeira consulta do boot dar certo; já ao fechar o menu, que pode ter
+  mudado o slug), lê o slug de `btv.conf` a cada volta, e só troca a
+  lista (e grava `cache/campaigns-live.conf`) quando o texto serializado
+  muda. O slide na tela continua se ainda existir na lista nova. Idem
+  para cabeçalho/rodapé (`TvChrome` em `campaign.h`,
+  `cache/tv-chrome-live.conf`; padrões = constantes de `config.h`).
+- `include/campaign_store.h` / `src/campaign_store.cpp` — lê/grava listas
+  no formato chave=valor de `config/campaigns.conf` (documentado no
+  cabeçalho do próprio arquivo). No boot o app carrega
+  `cache/campaigns-live.conf` (última lista do site) ou, se ainda não
+  existe, `config/campaigns.conf` (lista fixa de 2026-09-26).
 - `include/native_window.h` / `src/native_window.cpp` — extrai o ID de
   janela X11 nativo da janela do Raylib, via `glfwGetX11Window` (GLFW é
   vendorizado dentro do raylib — ver [[architecture]] > Build). Isolado
@@ -177,8 +179,12 @@ completo → registro → próximo), sem perder as animações.
   item -12); arquivos de 0 byte são ignorados ao carregar.
 - **Ordem**: uma única thread, um download por vez, sempre o próximo
   vídeo da rotação a partir do slide atual (`SetCurrentIndex`) que
-  ainda não está fresco neste boot. Falha → retry com backoff
-  (30s…10min). Não baixa com menos de 512MB livres.
+  ainda não está fresco neste boot. Falha → retry com backoff por vídeo
+  (30s…10min) e, a partir de 2 falhas seguidas (em vídeos quaisquer),
+  pausa a fila inteira (1…10min) — antes de 2026-10-28 ela passava pro
+  próximo vídeo na hora e virava rajada contra o YouTube. A linha
+  `ERROR:` do yt-dlp (stderr) vai junto no log da falha. Não baixa com
+  menos de 512MB livres.
 - **Custo**: `nice -n 19` + `ionice -c 3` (nunca disputa com o mpv/
   Chromium); mesmo seletor de formato do streaming (H.264 ≤720p), merge
   vídeo+áudio pelo ffmpeg só com cópia de stream (qualidade intacta).
@@ -346,8 +352,7 @@ código). Header/footer, ao contrário, nunca são cobertos pelo `mpv`
   `make run`, `make clean`) — mantido porque já existia no repo, mas não
   é mais um segundo pipeline de compilação C independente.
 - Dependências de runtime no dispositivo alvo (fora do binário): `mpv`,
-  `yt-dlp` (+ `python3`), `curl` (só necessário se `kUseLiveScraping`
-  voltar a `true`). Testado de verdade nesta sandbox depois de instalar
+  `yt-dlp` (+ `python3`), `curl` (campanhas do site). Testado de verdade nesta sandbox depois de instalar
   `mpv`/`yt-dlp` (ver [[known-issues]] item 5 e [[session-handoff]]) —
   **o vídeo aparece corretamente posicionado dentro da janela do app**,
   confirmado por screenshot com frames mudando ao longo do tempo (não

@@ -17,13 +17,16 @@ constexpr float kWindowHeightFraction = 1.0f;
 // ancoragem horizontal importa aqui.
 constexpr bool kAnchorWindowToRightEdge = true;
 
-// URL da página que estamos replicando/raspando.
+// URL da página que estamos replicando. Dela sai o bundle com o
+// endereço e a chave pública do backend (ver include/campaign_source.h).
 constexpr const char *kDisplayUrl = "https://esustv.jfbatl.com.br/display";
 
-// Intervalo de novo scraping, em segundos, usado apenas se o modo de
-// scraping ao vivo (kUseLiveScraping) for reativado. Mesmo valor do
-// polling de segurança usado pelo app original (refetchInterval: 30000ms).
-constexpr int kScrapePollIntervalSeconds = 30;
+// De quanto em quanto tempo a lista de campanhas é consultada no backend
+// (pedido do usuário em 2026-10-28: 5 min; o site usa 30 s + realtime).
+// Enquanto nenhuma consulta deu certo neste boot (rede ainda subindo),
+// tenta de novo mais cedo.
+constexpr int kCampaignsPollIntervalSeconds = 5 * 60;
+constexpr int kCampaignsRetryIntervalSeconds = 30;
 
 // Timeout de rede para o processo curl, em segundos.
 constexpr int kFetchTimeoutSeconds = 10;
@@ -82,14 +85,18 @@ constexpr int kBootNetworkWaitSeconds = 15;
 // watchdog do exec.sh reabre o painel quando ele voltar).
 constexpr const char *kNetworkTestUrl = "https://esus.treslagoas.ms.gov.br/painel";
 
-// Fonte de conteúdo: por autorização do dono do sistema (2026-09-26),
-// v1 usa uma lista FIXA de campanhas/vídeos (config/campaigns.conf),
-// carregada uma única vez na inicialização — sem ficar buscando a URL
-// original o tempo todo. `kUseLiveScraping = true` liga de volta o
-// modo antigo (thread de polling em DisplayScraper), caso essa decisão
-// mude no futuro. Ver docs/memory/known-issues.md.
-constexpr bool kUseLiveScraping = false;
+// Fonte de conteúdo (autorizado pelo dono do sistema em 2026-10-28):
+// a lista vem do backend do site, consultada a cada
+// kCampaignsPollIntervalSeconds — trocou no site, troca aqui. A última
+// lista recebida fica em kLiveCampaignsCachePath e é a usada no boot
+// (sem rede, o kiosk segue com ela). config/campaigns.conf (lista fixa
+// de 2026-09-26) só vale até a primeira consulta dar certo.
+// `kUseLiveCampaigns = false` volta ao modo só-lista-fixa.
+constexpr bool kUseLiveCampaigns = true;
 constexpr const char *kFixedCampaignsConfigPath = "config/campaigns.conf";
+constexpr const char *kLiveCampaignsCachePath = "cache/campaigns-live.conf";
+// Idem para cabeçalho/rodapé (TvChrome, include/campaign.h).
+constexpr const char *kLiveTvChromeCachePath = "cache/tv-chrome-live.conf";
 
 // Paleta replicada dos tokens CSS reais do site (ver
 // docs/memory/frontend-contract.md). Header e footer têm cores
@@ -105,8 +112,9 @@ constexpr Color kColorTextAccent = {0xbf, 0xdb, 0xfe, 0xff};
 
 // Textos de header/footer confirmados ao vivo em 2026-09-26 (painel real
 // em produção, não o fallback técnico genérico). Ver
-// docs/memory/frontend-contract.md. Sem leitura de configuracoes_tv
-// neste modo (ver known-issues.md item 6), então ficam fixos aqui.
+// docs/memory/frontend-contract.md. Desde 2026-10-28 textos e cores vêm
+// do site (configuracoes_tv.cabecalho_rodape_tv): estes e as cores acima
+// só valem até a primeira consulta dar certo (ou kUseLiveCampaigns=false).
 // UTF-8 com acentuação correta (revisão ortográfica de 2026-09-29): a
 // fonte é carregada com os glifos de PT-BR (ver src/ui.cpp).
 constexpr const char *kHeaderTitle = "PREFEITURA MUNICIPAL";
