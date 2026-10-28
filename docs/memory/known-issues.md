@@ -1,6 +1,6 @@
 # Problemas e decisões em aberto conhecidas
 
-## -15. Botão "Iniciar painel de chamadas" do PEC a cada abertura do painel — AUTOMATIZADO em 2026-10-28 (testado no `.204`); `.204` com pareamento recusado pelo servidor
+## -15. Botão "Iniciar painel de chamadas" do PEC a cada abertura do painel — AUTOMATIZADO em 2026-10-28 (testado no `.204` pareado); som da chamada sem teste
 
 O PEC mostra a tela "Dispositivo conectado" + botão toda vez que o
 Chromium do painel abre (boot, watchdog de rede, botões 1/2). No bundle
@@ -28,6 +28,11 @@ que o reset da parte 27 invalidou no servidor. Não confirmei porque o
 classificador do auto mode barrou ler o token do perfil. Correção
 provável: `panel-ctl.sh reset` (ou 3 segurado 10 s) + parear o `.204`
 de novo no PEC.
+
+**Confirmado**: `panel-ctl.sh reset` + pareamento novo pelo usuário →
+painel da unidade no ar; `panel-ctl.sh reload` volta direto ao painel
+("Por favor, aguarde.") sem ninguém clicar. Clones da imagem precisam
+de reset + pareamento próprio (não reaproveitar o perfil copiado).
 
 ## -14. Travamento com monitor de resolução alta (1080p/4K) — CORRIGIDO em 2026-10-26 (resolução travada em 720p, boot real testado no RK3229)
 O X usa a resolução nativa que o monitor anuncia. O RK3229 não aguenta

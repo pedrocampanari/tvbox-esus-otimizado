@@ -10,8 +10,9 @@ provavelmente pareamento antigo da imagem clonada. `xdotool` foi
 instalado só para o teste e removido (o `autoremove` levou só o
 `libxdo3`). Com o ok do usuário: `panel-ctl.sh reset` no `.204` → tela
 "Conectar painel de chamadas" com PIN, aguardando alguém parear no PEC
-(o PIN muda; não copiar daqui). Depois do pareamento falta conferir: painel
-abrindo sozinho e som da primeira chamada. Estado: commitado; `.204`
+(o PIN muda; não copiar daqui). Usuário pareou: painel da unidade no
+ar, e depois de `panel-ctl.sh reload` voltou ao painel sozinho
+(confirmado por captura). Falta: som da primeira chamada real. Estado: commitado; `.204`
 com `exec.sh` + extensão copiados por tar (iguais ao commit).
 
 ---
