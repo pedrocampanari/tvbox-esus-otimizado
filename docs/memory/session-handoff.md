@@ -1,5 +1,32 @@
 # Handoff de sessão
 
+## Sessão de 2026-10-28 (parte 30) — outro clone em `192.168.101.204`
+
+Mesma imagem (chaves de host iguais às do `.213`/`.196`), mas sem a chave
+do PC do usuário: ele rodou `ssh-copy-id` (o askpass do KDE pelo `!`
+falhou 3 vezes; terminal comum funcionou). O box estava em `e06d59a` +
+os 10 arquivos da parte 25 copiados por tar, md5 idênticos ao
+`a2b3335`; `git fsck` limpo, nenhum arquivo de 0 byte fora do perfil do
+Chromium. Guardados em `git stash` (o classificador do auto mode barrou
+`git checkout -- .`), `git pull --ff-only` → `6dd0391`, `install.sh`
+(nohup, sem erro), `make` (EXIT=0), `sync` + reboot. Voltou em ~2 min:
+720p, app + Chromium no ar, painel do PEC já pareado ("Dispositivo
+conectado"), 396 MB de RAM usados.
+
+**Bug achado**: sem `btv.conf` o menu de primeiro uso abre no boot em
+tela cheia, mas o Chromium sobe depois e fica POR CIMA — só a faixa
+x≥960 do menu aparecia. O `SetWindowFocused()` só rodava na transição
+fechado→aberto. Correção: com o menu aberto, `SetWindowFocused()` a cada
+`kMenuRaiseIntervalSeconds` (2 s). Compilado e instalado no `.204`;
+reboot sem `btv.conf` → "Menu: aberto" no log e alguém no aparelho o
+configurou pelo controle em ~1 min (cabo, sem UBS), antes da minha
+captura — o usuário confirmou que o menu apareceu completo.
+`btv.conf` final do `.204` = cabo, sem UBS (igual ao `.213`). Armadilha: `pgrep -f "bash ./install.sh"`
+via ssh casa com o próprio `bash -c` — usar `pgrep -f "install\.sh"`
+filtrando o pgrep, ou um marcador `EXIT=` no log.
+
+---
+
 ## Sessão de 2026-10-26 (parte 29) — monitor de resolução alta travava: resolução fixa em 720p
 
 Usuário: "quando conecto um monitor com resolução mais alta ele começa a

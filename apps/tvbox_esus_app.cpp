@@ -99,6 +99,10 @@ constexpr double kVideoMaxSlideSeconds = 20.0 * 60.0;
 // de avançar — evita piscar slides em sequência quando está tudo
 // falhando (sem rede e sem cache).
 constexpr double kVideoFailureHoldSeconds = 3.0;
+// Com o menu aberto, a janela volta para cima do Chromium a cada tanto:
+// no primeiro uso o menu abre antes de o painel subir, e o painel
+// mapeado depois cobriria o menu.
+constexpr double kMenuRaiseIntervalSeconds = 2.0;
 
 void HandleTerminationSignal(int) { g_running.store(false); }
 
@@ -248,6 +252,7 @@ int main() {
         setupMenu.StartBootNetworkCheck(kBootNetworkWaitSeconds);
     }
     bool menuWasOpen = false;
+    double menuRaiseAt = 0.0;
 
     size_t currentIndex = 0;
     bool startSlide = true; // força (re)início mesmo se o id não mudou (lista de 1 item)
@@ -277,6 +282,7 @@ int main() {
                 // Sem gerenciador de janelas: XRaiseWindow + foco do
                 // teclado (o painel do Chromium fica embaixo).
                 SetWindowFocused();
+                menuRaiseAt = GetTime() + kMenuRaiseIntervalSeconds;
             } else {
                 SetWindowSize(windowW, windowH);
                 SetWindowPosition(windowX, 0);
@@ -290,6 +296,10 @@ int main() {
             }
         }
         if (menuOpen) {
+            if (GetTime() >= menuRaiseAt) {
+                SetWindowFocused();
+                menuRaiseAt = GetTime() + kMenuRaiseIntervalSeconds;
+            }
             // Volume, 1/2/3 do controle ficam para fora do menu; o POWER
             // continua reiniciando (triggerhappy, fora deste processo).
             SetTargetFPS(30);
