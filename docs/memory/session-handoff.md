@@ -1,5 +1,21 @@
 # Handoff de sessão
 
+## Sessão de 2026-10-28 (parte 31) — clique automático no "Iniciar painel de chamadas"
+
+Extensão `config/panel-extension/` + flags no `exec.sh` ([[known-issues]]
+item -15). No `.204` (arquivos copiados por tar, md5 conferido, reboot):
+a extensão clica sozinha. Mas o painel do `.204` cai em "indisponível no
+momento" por falha de login no servidor (também com clique real),
+provavelmente pareamento antigo da imagem clonada. `xdotool` foi
+instalado só para o teste e removido (o `autoremove` levou só o
+`libxdo3`). Com o ok do usuário: `panel-ctl.sh reset` no `.204` → tela
+"Conectar painel de chamadas" com PIN, aguardando alguém parear no PEC
+(o PIN muda; não copiar daqui). Depois do pareamento falta conferir: painel
+abrindo sozinho e som da primeira chamada. Estado: commitado; `.204`
+com `exec.sh` + extensão copiados por tar (iguais ao commit).
+
+---
+
 ## Sessão de 2026-10-28 (parte 30) — outro clone em `192.168.101.204`
 
 Mesma imagem (chaves de host iguais às do `.213`/`.196`), mas sem a chave

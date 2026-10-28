@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "TV Box e-SUS - inicia o painel",
+  "version": "1.0",
+  "description": "Clica sozinho em \"Iniciar painel de chamadas\" do PEC (carregada pelo exec.sh).",
+  "content_scripts": [
+    {
+      "matches": ["https://esus.treslagoas.ms.gov.br/*"],
+      "js": ["autostart.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

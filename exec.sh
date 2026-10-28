@@ -148,6 +148,14 @@ fi
 # (`TranslateEnabled: false` +
 # `CommandLineFlagSecurityWarningsEnabled: false`). Se rodar sem passar
 # pelo install.sh, essas mensagens voltam a aparecer.
+#
+# config/panel-extension clica sozinho em "Iniciar painel de chamadas"
+# do PEC (o botão volta a cada abertura do painel). --load-extension vem
+# desligado por padrão no Chromium novo; o DisableLoadExtensionCommand-
+# LineSwitch em --disable-features religa. O --autoplay-policy deixa o
+# clique de script liberar o som das chamadas como um clique real. O
+# "matches" do manifest.json é o host do PANEL_URL: trocou o servidor,
+# troque lá também.
 if [ "$PANEL_ENABLED" = "1" ]; then
   CHROMIUM_BIN=""
   if command -v chromium >/dev/null 2>&1; then
@@ -194,7 +202,9 @@ if [ "$PANEL_ENABLED" = "1" ]; then
           --disable-infobars \
           --disable-session-crashed-bubble \
           --disable-translate \
-          --disable-features=Translate,TranslateUI \
+          --disable-features=Translate,TranslateUI,DisableLoadExtensionCommandLineSwitch \
+          --load-extension="$SCRIPT_DIR/config/panel-extension" \
+          --autoplay-policy=no-user-gesture-required \
           --no-first-run \
           --check-for-update-interval=31536000 \
           >> "$PANEL_LOG" 2>&1

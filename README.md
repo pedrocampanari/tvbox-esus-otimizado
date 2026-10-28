@@ -29,6 +29,7 @@ include/                  # headers dos módulos
 src/                      # implementação dos módulos (scraper, player, video_cache, ui, remote_control, setup_menu, procexec, campaign_store)
 config/campaigns.conf     # lista FIXA de vídeos/campanhas (fonte de conteúdo padrão, ver known-issues)
 config/rc-rk322x-tvbox.toml # keymap do controle remoto IR (install.sh instala)
+config/panel-extension/   # extensão do Chromium: clica "Iniciar painel de chamadas" do PEC
 panel-ctl.sh              # reload/reset/kiosk do Chromium do painel
 net-ctl.py                # rede do menu de configuração (netplan/networkd)
 btv.conf                  # configuração gravada pelo menu (gerado, fora do git)

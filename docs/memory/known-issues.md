@@ -1,5 +1,34 @@
 # Problemas e decisões em aberto conhecidas
 
+## -15. Botão "Iniciar painel de chamadas" do PEC a cada abertura do painel — AUTOMATIZADO em 2026-10-28 (testado no `.204`); `.204` com pareamento recusado pelo servidor
+
+O PEC mostra a tela "Dispositivo conectado" + botão toda vez que o
+Chromium do painel abre (boot, watchdog de rede, botões 1/2). No bundle
+(`index.*.js`, componente da tela inicial) o `onClick` só toca o
+`<audio>` (`chamada-painel.*.mp3`) mudo para destravar o autoplay e
+troca para o painel. Solução: extensão MV3 local
+`config/panel-extension/` (content script que procura o botão pelo
+texto a cada 1 s e chama `.click()`), carregada pelo `exec.sh` com
+`--load-extension` + `DisableLoadExtensionCommandLineSwitch` em
+`--disable-features` (sem isso o Chromium 150 ignora a flag) +
+`--autoplay-policy=no-user-gesture-required` (clique de script não é
+gesto de usuário). O `matches` do manifest é o host do `PANEL_URL`.
+Testado no `.204`: depois do boot e de `panel-ctl.sh reload` a tela do
+botão some sozinha. O som da chamada não foi testado: nenhuma chamada
+chegou ao painel.
+
+**Achado no teste**: no `.204`, depois do clique o PEC mostra "Ops!
+Painel de chamadas indisponível no momento". Um clique real (`xdotool`,
+extensão desligada) dá o mesmo resultado, então a extensão não é a
+causa. Pelo bundle, essa tela aparece quando `GET
+/api/painel-chamadas/dispositivo/status` e `POST .../dispositivo/login`
+(com `tokenAcesso`/`uuidDispositivo` do localStorage) falham. Hipótese:
+o perfil do Chromium veio clonado da imagem antiga e traz o pareamento
+que o reset da parte 27 invalidou no servidor. Não confirmei porque o
+classificador do auto mode barrou ler o token do perfil. Correção
+provável: `panel-ctl.sh reset` (ou 3 segurado 10 s) + parear o `.204`
+de novo no PEC.
+
 ## -14. Travamento com monitor de resolução alta (1080p/4K) — CORRIGIDO em 2026-10-26 (resolução travada em 720p, boot real testado no RK3229)
 O X usa a resolução nativa que o monitor anuncia. O RK3229 não aguenta
 resoluções altas: a Mali-400 só tem GLES 2.0 (o glamor do X precisa de
